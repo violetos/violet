@@ -81,7 +81,7 @@ call_system:
 .global extend_frame
 .type extend_frame, %function
 extend_frame:
-    sub x0, x0, #EXT_SIZE
+    sub x0, x0, #OFF_EXT_GEN
 
     stp q0, q1,   [x0, #(32 * 0)]
     stp q2, q3,   [x0, #(32 * 1)]
