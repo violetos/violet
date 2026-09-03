@@ -16,7 +16,7 @@ This project uses [Zig](https://ziglang.org). We recommend using [zvm](https://g
 > [!NOTE]
 > The required Zig version is `0.16.0`.
 
-To run a virtual instance of violet on your host machine, you will also need [QEMU](https://www.qemu.org) `11.1.0`.
+To run a virtual instance of violet on your host machine, you will also need [QEMU](https://www.qemu.org) `11.1.1`.
 
 ## Build it yourself
 
