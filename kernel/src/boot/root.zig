@@ -39,7 +39,6 @@ export var hhdm_request: limine.HhdmRequest linksection(".limine_requests") = .{
 export var memmap_request: limine.MemoryMapRequest linksection(".limine_requests") = .{};
 export var rsdp_request: limine.RsdpRequest linksection(".limine_requests") = .{};
 export var pagingmode_request: limine.PagingModeRequest linksection(".limine_requests") = .{ .mode = requested_mode, .max_mode = requested_mode, .min_mode = requested_mode };
-export var exec_request: limine.ExecutableAddressRequest linksection(".limine_requests") = .{};
 
 export var framebuffer_request: limine.FramebufferRequest linksection(".limine_requests") = .{};
 
@@ -90,6 +89,12 @@ export fn kernel_entry() callconv(.c) noreturn {
     };
 
     drivers.runStage(.stage1, getXsdt(), null);
+
+    mem.virt.init(memmap_entries) catch |err| {
+        std.debug.panic("mem.virt.init failed: {s}", .{@errorName(err)});
+    };
+
+    drivers.runStage(.stage2, getXsdt(), null);
 
     kernel.syscall.init() catch |err| {
         std.debug.panic("kernel.syscall.init failed: {s}", .{@errorName(err)});

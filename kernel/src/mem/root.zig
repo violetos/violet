@@ -14,6 +14,8 @@
 
 // --- exports --- //
 
+pub const virt = @import("virt/root.zig");
+
 pub const paging = @import("paging.zig");
 pub const phys = @import("phys.zig");
 pub const utils = @import("utils.zig");
@@ -53,4 +55,5 @@ comptime {
     _ = paging;
     _ = phys;
     _ = utils;
+    _ = virt;
 }
