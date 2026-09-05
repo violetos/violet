@@ -299,8 +299,8 @@ pub fn canMapAt(level: paging.Level) bool {
 
 pub fn activate(low_half_root: ?u64, high_half_root: u64) void {
     if (low_half_root) |lhr| {
-        const user_pml4 = mem.toHhdm(*[512]u64, lhr);
-        const kernel_pml4 = mem.toHhdm(*[512]u64, high_half_root);
+        const user_pml4 = mem.toHhdm([512]u64, lhr);
+        const kernel_pml4 = mem.toHhdm([512]u64, high_half_root);
 
         @memcpy(user_pml4[256..512], kernel_pml4[256..512]);
 

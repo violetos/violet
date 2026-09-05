@@ -32,6 +32,10 @@ pub const InterruptsContext = struct {
     pub fn current() *InterruptsContext {
         return &kernel.cpu.CpuContext.current().?.interrupts_context;
     }
+
+    pub fn updateHhdm(self: *InterruptsContext) void {
+        _ = self;
+    }
 };
 
 pub const ReducedFrame = extern struct {
