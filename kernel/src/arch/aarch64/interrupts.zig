@@ -276,6 +276,10 @@ pub const InterruptsContext = struct {
     pub fn current() *InterruptsContext {
         return &kernel.cpu.CpuContext.current().?.interrupts_context;
     }
+
+    pub fn updateHhdm(self: *InterruptsContext) void {
+        self.kernel_stack_top = @intFromPtr(mem.updatePtr(anyopaque, @ptrFromInt(self.kernel_stack_top)));
+    }
 };
 
 // --- //
@@ -336,7 +340,7 @@ const FrameState = union(enum) {
         return switch (self.*) {
             .reduced_frame => |f| blk: {
                 const extended = extend_frame(f);
-                self.* = .{ .extended = extended };
+                self.* = .{ .extended_frame = extended };
                 break :blk extended;
             },
             .extended_frame => |f| f,

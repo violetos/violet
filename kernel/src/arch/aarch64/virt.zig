@@ -12,8 +12,23 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-pub const cpu = @import("cpu.zig");
-pub const interrupts = @import("interrupts.zig");
-pub const paging = @import("paging.zig");
-pub const registers = @import("registers.zig");
-pub const virt = @import("virt.zig");
+// --- dependencies --- //
+
+const std = @import("std");
+
+// --- imports --- //
+
+const kernel = @import("root");
+
+const arch = kernel.arch;
+
+const mem = kernel.mem;
+const paging = mem.paging;
+
+// --- arch/aarch64/virt.zig --- //
+
+pub fn prepare() !void {}
+
+pub fn configure(high_half_pa: u64) !void {
+    arch.paging.activate(null, high_half_pa);
+}

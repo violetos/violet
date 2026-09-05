@@ -244,8 +244,6 @@ pub fn isCanonical(va: u64) bool {
     return va <= low_half_max or va >= high_half_min;
 }
 
-pub fn configure() !void {}
-
 pub fn getBootTable() u64 {
     return arch.registers.loadTtbr1El1();
 }
