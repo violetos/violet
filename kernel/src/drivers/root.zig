@@ -112,7 +112,7 @@ pub fn runStage(comptime stage: Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) void 
         comptime if (Module.discover_stage) |ds| if (ds != stage) continue;
 
         Module.discover(stage, xsdt, dt) catch |err| {
-            std.debug.panic("driver '{s}' init at {} failed: {s}", .{ @tagName(stage), @typeName(Module), @errorName(err) });
+            std.debug.panic("driver '{s}' init at {s} failed: {s}", .{ @tagName(stage), @typeName(Module), @errorName(err) });
         };
     }
 }
