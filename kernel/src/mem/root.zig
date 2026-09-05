@@ -21,6 +21,8 @@ pub const utils = @import("utils.zig");
 // --- mem/root.zig --- //
 
 pub var zero_page_pa: u64 = undefined;
+
+pub var old_hhdm: u64 = undefined;
 pub var hhdm_offset: u64 = undefined;
 
 pub inline fn toHhdm(comptime T: type, pa: u64) *T {
@@ -29,6 +31,22 @@ pub inline fn toHhdm(comptime T: type, pa: u64) *T {
 
 pub inline fn fromHhdm(comptime T: type, ptr: *T) u64 {
     return @intFromPtr(ptr) - hhdm_offset;
+}
+
+pub inline fn updateRef(comptime T: type, ref: **T) void {
+    const raw_old: u64 = @intFromPtr(ref.*);
+    const pa = raw_old - old_hhdm;
+    ref.* = toHhdm(T, pa);
+}
+
+pub inline fn updatePtr(comptime T: type, ptr: *T) *T {
+    const raw_old: u64 = @intFromPtr(ptr);
+    const pa = raw_old - old_hhdm;
+    return toHhdm(T, pa);
+}
+
+pub inline fn updatePtrs(comptime T: type, ptrs: [*]T) [*]T {
+    return @ptrCast(updatePtr(T, @ptrCast(ptrs)));
 }
 
 comptime {

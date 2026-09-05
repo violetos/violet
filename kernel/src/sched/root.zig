@@ -37,4 +37,9 @@ pub const SchedContext = struct {
     pub fn current() *SchedContext {
         return &kernel.cpu.CpuContext.current().?.sched_context;
     }
+
+    pub fn updateHhdm(self: *SchedContext) void {
+        _ = self;
+        // no task at this point
+    }
 };

@@ -52,6 +52,12 @@ var available_pages: usize = undefined;
 
 var global_lock: kernel.mem.utils.RwLock align(8) = undefined;
 
+pub fn updateHhdm() void {
+    bitmaps.ptr = mem.updatePtrs(ZoneBitSet, bitmaps.ptr);
+    free_counts.ptr = mem.updatePtrs(u16, free_counts.ptr);
+    links.ptr = mem.updatePtrs(ZoneLinks, links.ptr);
+}
+
 pub fn totalPages() usize {
     return total_pages;
 }
@@ -65,20 +71,21 @@ pub fn availablePages() usize {
 
 pub const PhysContext = struct {
     const CACHE_LEN = PAGE_SIZE / @sizeOf(u64);
-    preheat_cache: *[CACHE_LEN]u64,
+    const CACHE_TYPE = [CACHE_LEN]u64;
+    preheat_cache: *CACHE_TYPE,
     preheat_len: usize,
-    recycle_cache: *[CACHE_LEN]u64,
+    recycle_cache: *CACHE_TYPE,
     recycle_len: usize,
 
     pub fn init(self: *PhysContext) !void {
         var page: [1]u64 = undefined;
 
         try _allocNonContiguous(&page);
-        self.preheat_cache = mem.toHhdm([CACHE_LEN]u64, page[0]);
+        self.preheat_cache = mem.toHhdm(CACHE_TYPE, page[0]);
         self.preheat_len = CACHE_LEN;
 
         try _allocNonContiguous(&page);
-        self.recycle_cache = mem.toHhdm([CACHE_LEN]u64, page[0]);
+        self.recycle_cache = mem.toHhdm(CACHE_TYPE, page[0]);
         self.recycle_len = 0;
 
         try _allocNonContiguous(self.preheat_cache[0..]);
@@ -92,6 +99,11 @@ pub const PhysContext = struct {
             @branchHint(.cold);
             return null;
         }
+    }
+
+    pub fn updateHhdm(self: *PhysContext) void {
+        mem.updateRef(CACHE_TYPE, &self.preheat_cache);
+        mem.updateRef(CACHE_TYPE, &self.recycle_cache);
     }
 };
 

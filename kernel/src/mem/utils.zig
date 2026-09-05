@@ -354,6 +354,23 @@ pub fn NodeList(comptime Item: type, comptime node_size: ?usize) type {
             return &entry[item_index];
         }
 
+        pub fn updateHhdm(self: *@This()) void {
+            var next_ptr = &self.first_node;
+            var next_node = self.first_node.load(.monotonic);
+            while (next_node) |node| {
+                for (&node.entries) |*entry| {
+                    if (entry.load(.monotonic)) |entry_ptr| {
+                        entry.store(mem.updatePtrs(Item, entry_ptr), .monotonic);
+                    }
+                }
+
+                next_ptr.store(mem.updatePtr(Node, node), .monotonic);
+
+                next_ptr = &node.next_node;
+                next_node = node.next_node.load(.monotonic);
+            }
+        }
+
         comptime {
             if (@sizeOf(EntryPtr) != 8) @compileError("NodeList.EntryPtr should be 8 B");
             if (@sizeOf(NodePtr) != 8) @compileError("NodeList.NodePtr should be 8 B");
@@ -389,6 +406,11 @@ pub fn SlotMap(comptime Item: type) type {
                 std.debug.assert(!self.released);
                 _ = tryAcquire(&self.item.refcount);
                 return self.*;
+            }
+
+            pub fn updateHhdm(self: *ArcRef) void {
+                mem.updateRef(Self, &self.map);
+                mem.updateRef(Item, &self.item);
             }
         };
 
@@ -496,8 +518,8 @@ pub fn SlotMap(comptime Item: type) type {
 
                 const type_info = comptime @typeInfo(Item.Payload);
                 if (type_info == .@"struct" or type_info == .@"union" or type_info == .@"enum" or type_info == .@"opaque") {
-                    if (comptime @hasDecl(Item.Payload, "deinit")) {
-                        slot.item.value.deinit();
+                    if (comptime @hasDecl(Item.Payload, "SlotMap_deinit")) {
+                        slot.item.value.SlotMap_deinit();
                     }
                 }
 
@@ -544,6 +566,27 @@ pub fn SlotMap(comptime Item: type) type {
             } else {
                 self.enqueueFree(handle);
             }
+        }
+
+        pub fn updateHhdm(self: *Self) void {
+            const ActualItem = if (is_arc) Item.Payload else Item;
+
+            if (comptime @hasDecl(ActualItem, "SlotMap_updateHhdm")) {
+                const max_index = self.len.load(.monotonic);
+                for (0..max_index) |i| {
+                    if (self.slots.tryGet(i)) |slot| {
+                        if (slot.generation.load(.monotonic) % 2 != 0) {
+                            if (comptime is_arc) {
+                                slot.item.value.SlotMap_updateHhdm();
+                            } else {
+                                slot.item.SlotMap_updateHhdm();
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.slots.updateHhdm();
         }
     };
 }
@@ -696,6 +739,19 @@ pub fn UnrolledList(comptime Item: type, comptime node_size: ?usize) type {
                 .current_item_index = 0,
                 .items_left = self.len,
             };
+        }
+
+        pub fn updateHhdm(self: *Self) void {
+            var next_node = self.first_node;
+            while (next_node) |node| {
+                next_node = node.next;
+                if (node.next) |*next| {
+                    mem.updateRef(Node, next);
+                }
+            }
+
+            if (self.first_node) |*first_node| mem.updateRef(Node, first_node);
+            if (self.last_node) |*last_node| mem.updateRef(Node, last_node);
         }
     };
 }

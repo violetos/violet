@@ -97,14 +97,18 @@ export fn kernel_entry() callconv(.c) noreturn {
 
     drivers.runStage(.stage3, getXsdt(), null);
 
-    if (builtin.mode == .Debug) {
-        if (framebuffer_request.response) |fb_response| {
-            if (fb_response.framebuffer_count > 0) {
-                const framebuffer = fb_response.getFramebuffers()[0];
-                for (0..100) |i| {
-                    const fb_ptr: [*]volatile u32 = @ptrCast(@alignCast(framebuffer.address));
-                    fb_ptr[i * (framebuffer.pitch / 4) + i] = 0xffffff;
-                }
+    if (framebuffer_request.response) |fbr| {
+        const fb_response: *limine.FramebufferResponse = mem.updatePtr(limine.FramebufferResponse, fbr);
+
+        if (fb_response.framebuffer_count > 0) {
+            const framebuffers: [*]*limine.Framebuffer = mem.updatePtrs(*limine.Framebuffer, fb_response.framebuffers.?);
+            const framebuffer = mem.updatePtr(limine.Framebuffer, framebuffers[0]);
+
+            const old_fb_ptr: [*]u32 = @ptrCast(@alignCast(framebuffer.address));
+            const fb_ptr: [*]volatile u32 = mem.updatePtrs(u32, old_fb_ptr);
+
+            for (0..100) |i| {
+                fb_ptr[i * (framebuffer.pitch / 4) + i] = 0xffffff;
             }
         }
     }

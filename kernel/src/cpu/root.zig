@@ -71,6 +71,12 @@ pub const CpuContext = struct {
 
         return cpu_context;
     }
+
+    pub fn updateHhdm(self: *CpuContext) void {
+        self.interrupts_context.updateHhdm();
+        self.phys_context.updateHhdm();
+        self.sched_context.updateHhdm();
+    }
 };
 
 // --- //
@@ -116,4 +122,15 @@ inline fn hardwareId(mp_info: *limine.MpInfo) u64 {
         .x86_64 => mp_info.lapic_id,
         else => unreachable,
     };
+}
+
+pub fn updateHhdm() void {
+    var cpu_it = cpu_contexts.iterator();
+    while (cpu_it.next()) |context| {
+        context.updateHhdm();
+    }
+
+    cpu_contexts.updateHhdm();
+
+    arch.cpu.setPerCpu(@intFromPtr(mem.updatePtr(CpuContext, @ptrFromInt(arch.cpu.getPerCpu()))));
 }
