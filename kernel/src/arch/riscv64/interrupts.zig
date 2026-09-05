@@ -32,6 +32,10 @@ pub const InterruptsContext = struct {
     pub fn current() *InterruptsContext {
         return &kernel.cpu.CpuContext.current().?.interrupts_context;
     }
+
+    pub fn updateHhdm(self: *InterruptsContext) void {
+        _ = self;
+    }
 };
 
 pub const ReducedFrame = extern struct {
@@ -69,15 +73,15 @@ pub const InterruptData = struct {
 pub const InterruptState = enum(u1) { disabled = 0, enabled = 1 };
 
 pub inline fn set(new: InterruptState) InterruptState {
-    const old_sstatus = asm volatile ("csrr %[ret], sstatus"
-        : [ret] "=r" (-> u64),
-    );
-    const was_enabled: InterruptState = if ((old_sstatus & (1 << 1)) != 0) .enabled else .disabled;
-
-    switch (new) {
-        .disabled => asm volatile ("csrci sstatus, 0x2" ::: .{ .memory = true }),
-        .enabled => asm volatile ("csrsi sstatus, 0x2" ::: .{ .memory = true }),
-    }
-
-    return was_enabled;
+    const old: u64 = switch (new) {
+        .disabled => asm volatile ("csrrc %[old], sstatus, %[mask]"
+            : [old] "=r" (-> u64),
+            : [mask] "r" (@as(u64, 0x2)),
+        ),
+        .enabled => asm volatile ("csrrs %[old], sstatus, %[mask]"
+            : [old] "=r" (-> u64),
+            : [mask] "r" (@as(u64, 0x2)),
+        ),
+    };
+    return if ((old & 0x2) != 0) .enabled else .disabled;
 }
