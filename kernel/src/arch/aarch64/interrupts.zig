@@ -75,7 +75,6 @@ fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
 
         if (sched_context.current_task) |*task_ref| {
             const task: *sched.Task = task_ref.payload();
-            arch.registers.storeTpidrroEl0(task.locals_userland);
             break :blk task.interrupt_data;
         } else {
             break :blk InterruptData{

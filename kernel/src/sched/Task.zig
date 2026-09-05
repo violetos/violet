@@ -39,7 +39,4 @@ pub const Ref = Map.ArcRef;
 
 process: sched.Process.Ref,
 
-locals_kernel: *anyopaque,
-locals_userland: u64,
-
 interrupt_data: arch.interrupts.InterruptData,
