@@ -3,8 +3,6 @@
 **/zig-out
 
 /.vscode
-/.violet
-/bin
 
 *.DS_Store
 *.log
