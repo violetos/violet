@@ -96,7 +96,7 @@ pub fn init() !void {
     for (mp_infos) |mp_info| {
         const cpu_context = try CpuContext.init(mp_info);
 
-        switch (builtin.cpu.arch) {
+        switch (comptime builtin.cpu.arch) {
             .aarch64 => if (mp_response.bsp_mpidr == cpu_context.hardware_id) {
                 this_cpu = cpu_context;
             },
@@ -110,7 +110,7 @@ pub fn init() !void {
         }
     }
 
-    arch.cpu.setPerCpu(@intFromPtr(this_cpu));
+    arch.interrupts.cpuInit(this_cpu);
 
     initialized = true;
 }
@@ -131,6 +131,4 @@ pub fn updateHhdm() void {
     }
 
     cpu_contexts.updateHhdm();
-
-    arch.cpu.setPerCpu(@intFromPtr(mem.updatePtr(CpuContext, @ptrFromInt(arch.cpu.getPerCpu()))));
 }

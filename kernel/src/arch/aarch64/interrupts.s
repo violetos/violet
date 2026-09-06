@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+.arch armv8-a+fp
+
 .equ GEN_SIZE,       288
 .equ EXT_SIZE,       816
 
@@ -44,7 +46,7 @@ call_system:
 
     str x1, [x0, #OFF_GEN_SP]
 
-    str x30, [x0, #OFF_GEN_PC] // in order to make it compatible with ERET
+    str x30, [x0, #OFF_GEN_PC] // in order to make it eret-able
     str x30, [x0, #OFF_GEN_LR]
 
     mrs x1, tpidr_el0

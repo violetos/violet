@@ -255,13 +255,13 @@ comptime {
 
 pub fn init() !void {
     kernel.syscall.kit.call_system = &call_system;
-    cpuInit();
 }
 
-pub fn cpuInit() void {
+pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
+    arch.cpu.setPerCpu(@intFromPtr(cpu_context));
+
     arch.registers.storeVbarEl1(@intFromPtr(&exception_vector_table));
-    const interrupts_context = InterruptsContext.current();
-    arch.registers.storeSpEl1(interrupts_context.kernel_stack_top);
+    arch.registers.storeSpEl1(cpu_context.interrupts_context.kernel_stack_top);
 }
 
 pub const InterruptsContext = struct {
@@ -279,6 +279,12 @@ pub const InterruptsContext = struct {
 
     pub fn updateHhdm(self: *InterruptsContext) void {
         self.kernel_stack_top = @intFromPtr(mem.updatePtr(anyopaque, @ptrFromInt(self.kernel_stack_top)));
+
+        if (kernel.cpu.CpuContext.current()) |ctx| {
+            if (&ctx.interrupts_context == self) {
+                arch.cpu.setPerCpu(@intFromPtr(ctx));
+            }
+        }
     }
 };
 
