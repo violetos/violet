@@ -306,6 +306,7 @@ pub const SoC = enum {
 
     pub fn getDrivers(self: SoC) []const u8 {
         return switch (self) {
+            .bcm2711 => "uart_pl011",
             else => "",
         };
     }
