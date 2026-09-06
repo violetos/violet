@@ -31,15 +31,13 @@ pub const discover_stage: ?drivers.Stage = .stage2;
 var instances: [2]@This() = @splat(undefined);
 
 pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
-    if (stage != .stage2) return;
-
-    if (xsdt) |x| try xsdtDiscover(stage, x);
-    if (dt) |d| try dtDiscover(stage, d);
-}
-
-inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !void {
     _ = stage;
 
+    if (xsdt) |x| try xsdtDiscover(x);
+    if (dt) |d| try dtDiscover(d);
+}
+
+inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     const spcr = xsdt.find(acpi.Spcr) orelse return;
 
     switch (spcr.interface_type) {
@@ -107,8 +105,7 @@ inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !v
     }, 15);
 }
 
-inline fn dtDiscover(comptime stage: drivers.Stage, dt: void) !void {
-    _ = stage;
+inline fn dtDiscover(dt: void) !void {
     _ = dt;
 
     // instances[1]
