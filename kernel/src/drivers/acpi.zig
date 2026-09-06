@@ -325,3 +325,92 @@ pub const Spcr = extern struct {
         if (@offsetOf(Spcr, "namespace_string_offset") != 86) @compileError("Spcr.namespace_string_offset offset mismatch");
     }
 };
+
+pub const Dbg2 = extern struct {
+    pub const SIGNATURE = "DBG2";
+
+    header: SdtHeader,
+
+    info_offset: u32,
+    info_count: u32,
+
+    pub fn getDevice(self: *const Dbg2, index: u32) ?*align(1) const DebugDeviceInformation {
+        if (index >= self.info_count) return null;
+
+        var current_offset = self.info_offset;
+        var i: u32 = 0;
+        const base_ptr: [*]const u8 = @ptrCast(self);
+
+        while (i < index) : (i += 1) {
+            if (current_offset + @sizeOf(DebugDeviceInformation) > self.header.length) return null;
+            const dev: *align(1) const DebugDeviceInformation = @ptrCast(&base_ptr[current_offset]);
+            current_offset += dev.length;
+        }
+
+        if (current_offset + @sizeOf(DebugDeviceInformation) > self.header.length) return null;
+        return @ptrCast(&base_ptr[current_offset]);
+    }
+};
+
+pub const DebugDeviceInformation = extern struct {
+    revision: u8,
+    length: u16 align(1),
+    base_address_register_count: u8,
+    namespace_string_length: u16 align(1),
+    namespace_string_offset: u16 align(1),
+    oem_data_length: u16 align(1),
+    oem_data_offset: u16 align(1),
+    port_type: PortType align(1),
+    port_subtype: u16 align(1),
+    _reserved: u16 align(1),
+    base_address_register_offset: u16 align(1),
+    address_size_offset: u16 align(1),
+
+    pub const PortType = enum(u16) {
+        serial = 0x8000,
+        ieee1394 = 0x8001,
+        usb = 0x8002,
+        net = 0x8003,
+        _, // reserved
+    };
+
+    pub const PortSubtypeSerial = enum(u16) {
+        full_16550 = 0x0000,
+        full_16450 = 0x0001,
+        arm_pl011 = 0x0003,
+        arm_sbsa_generic_uart = 0x000E,
+        _, // other variations
+    };
+
+    pub fn getBaseAddress(self: *align(1) const DebugDeviceInformation, index: u8) ?*align(1) const Gas {
+        if (index >= self.base_address_register_count) return null;
+
+        const base_ptr: [*]const u8 = @ptrCast(self);
+        const gas_array_ptr: [*]align(1) const Gas = @ptrCast(&base_ptr[self.base_address_register_offset]);
+
+        return &gas_array_ptr[index];
+    }
+
+    pub fn getAddressSize(self: *align(1) const DebugDeviceInformation, index: u8) ?u32 {
+        if (index >= self.base_address_register_count) return null;
+
+        const base_ptr: [*]const u8 = @ptrCast(self);
+        const size_array_ptr: [*]align(1) const u32 = @ptrCast(&base_ptr[self.address_size_offset]);
+
+        return size_array_ptr[index];
+    }
+
+    pub fn namespaceString(self: *align(1) const DebugDeviceInformation) ?[]const u8 {
+        if (self.namespace_string_length == 0 or self.namespace_string_offset == 0) return null;
+
+        const base_ptr: [*]const u8 = @ptrCast(self);
+        return base_ptr[self.namespace_string_offset..][0..self.namespace_string_length];
+    }
+
+    comptime {
+        if (@sizeOf(DebugDeviceInformation) != 22) @compileError("DebugDeviceInformation size must be 22");
+        if (@offsetOf(DebugDeviceInformation, "length") != 1) @compileError("Offset mismatch");
+        if (@offsetOf(DebugDeviceInformation, "base_address_register_offset") != 18) @compileError("Offset mismatch");
+        if (@offsetOf(DebugDeviceInformation, "address_size_offset") != 20) @compileError("Offset mismatch");
+    }
+};
