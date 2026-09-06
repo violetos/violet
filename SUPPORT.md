@@ -63,10 +63,10 @@ Regardless of the target architecture, the underlying platform must expose:
 
 | Platform | Target Tier | Current State | 
 | :--- | :---: | :---: |
-| **QEMU (aarch64)** | Tier 1 | Tier 4 🔨 |
-| **QEMU (riscv64)** | Tier 1 | Tier 3 🔨 |
-| **QEMU (x86_64)** | Tier 1 | Tier 3 🔨 |
-| **Raspberry Pi 4**<sup>1</sup>| Tier 1 | 🗓️ |
+| **QEMU (aarch64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
+| **QEMU (riscv64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
+| **QEMU (x86_64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
+| **Raspberry Pi 4**<sup>1</sup>| Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
 | **Radxa Rock 5B** | Tier 2 | 🗓️ |
 | **Orange Pi5 Plus** | Tier 2 | 🗓️ |
 | **VisionFive 2**<sup>2</sup> | Tier 2 | 🗓️ |
