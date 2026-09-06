@@ -37,7 +37,7 @@
 #define GPT_TABLE_SECTORS 32ULL
 #define TRAILING_SECTORS (1ULL + GPT_TABLE_SECTORS)
 
-#define FAT32_MIN_SECTORS 66600ULL
+#define FAT32_MIN_SECTORS 524288ULL
 #define SIZE_MARGIN_PERCENT 20ULL
 #define SIZE_MARGIN_FIXED_BYTES (4ULL * 1024 * 1024)
 #define ALIGN_SECTORS 2048ULL
@@ -407,7 +407,7 @@ int main(int argc, char **argv) {
 
     FATFS fs;
     BYTE work[FF_MAX_SS];
-    MKFS_PARM mkfs_opt = { .fmt = FM_FAT32 | FM_SFD, .au_size = 0 };
+    MKFS_PARM mkfs_opt = { .fmt = FM_FAT32 | FM_SFD, .au_size = 4096 };
 
     if (f_mount(&fs, "0:", 1) == FR_NO_FILESYSTEM) {
         check_ff(f_mkfs("0:", &mkfs_opt, work, sizeof(work)), "formatting failed");
