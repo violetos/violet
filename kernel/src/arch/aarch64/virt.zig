@@ -27,7 +27,13 @@ const paging = mem.paging;
 
 // --- arch/aarch64/virt.zig --- //
 
-pub fn prepare() !void {}
+pub fn prepare() !void {
+    (arch.registers.MAIR_EL1{
+        .attr0 = arch.registers.MAIR_EL1.NORMAL_WRITEBACK_NONTRANSIENT,
+        .attr1 = arch.registers.MAIR_EL1.NORMAL_NONCACHEABLE,
+        .attr2 = arch.registers.MAIR_EL1.DEVICE_nGnRnE,
+    }).store();
+}
 
 pub fn configure(high_half_pa: u64) !void {
     arch.paging.activate(null, high_half_pa);

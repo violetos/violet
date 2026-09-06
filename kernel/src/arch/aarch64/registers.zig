@@ -584,3 +584,39 @@ pub const SPSR_EL1 = packed struct(u64) {
         );
     }
 };
+
+/// Memory Attribute Indirection Register (EL1)
+pub const MAIR_EL1 = packed struct(u64) {
+    attr0: u8 = 0,
+    attr1: u8 = 0,
+    attr2: u8 = 0,
+    attr3: u8 = 0,
+    attr4: u8 = 0,
+    attr5: u8 = 0,
+    attr6: u8 = 0,
+    attr7: u8 = 0,
+
+    pub const DEVICE_nGnRnE = 0b0000_00_00;
+    pub const DEVICE_nGnRE = 0b0000_01_00;
+    pub const DEVICE_nGRE = 0b0000_10_00;
+    pub const DEVICE_GRE = 0b0000_11_00;
+
+    pub const NORMAL_WRITEBACK_TRANSIENT = 0b0111_0111;
+    pub const NORMAL_WRITEBACK_NONTRANSIENT = 0b1111_1111;
+    pub const NORMAL_WRITETHROUGH_TRANSIENT = 0b0011_0011;
+    pub const NORMAL_WRITETHROUGH_NONTRANSIENT = 0b1011_1011;
+    pub const NORMAL_NONCACHEABLE = 0b0100_0100;
+
+    pub fn load() @This() {
+        return asm volatile ("mrs %[output], mair_el1"
+            : [output] "=r" (-> @This()),
+        );
+    }
+
+    pub fn store(self: @This()) void {
+        asm volatile ("msr mair_el1, %[input]"
+            :
+            : [input] "r" (self),
+        );
+    }
+};
