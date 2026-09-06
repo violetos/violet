@@ -28,6 +28,7 @@
         "SUPPORT.md",
         "basalt",
         "build",
+        "genesis",
         "kernel",
     },
 }
