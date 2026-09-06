@@ -3,7 +3,7 @@
 Copyright (c) 2024-2026 YiraSan.
 
 This product includes software developed by The violetOS Project 
-(https://github.com/YiraSan/violet).
+(https://github.com/violetos/violet).
 
 ## Third-Party Acknowledgements
 
