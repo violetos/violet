@@ -24,6 +24,10 @@ const kernel = @import("root");
 
 pub fn init() !void {}
 
+pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
+    kernel.arch.cpu.setPerCpu(@intFromPtr(cpu_context));
+}
+
 pub const InterruptsContext = struct {
     pub fn init(self: *InterruptsContext) !void {
         _ = self;
