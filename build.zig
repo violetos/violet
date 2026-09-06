@@ -293,14 +293,16 @@ pub const SoC = enum {
 
     pub fn getPageSize(self: SoC) u64 {
         return switch (self) {
-            .bcm2711, .rk3588 => 16,
+            .rk3588 => 16,
+            .bcm2711 => 4, // temp
             .jh7110 => 4,
         };
     }
 
     pub fn getPageLevels(self: SoC) u8 {
         return switch (self) {
-            .bcm2711, .rk3588, .jh7110 => 3,
+            .rk3588, .jh7110 => 3,
+            .bcm2711 => 4, // temp
         };
     }
 
