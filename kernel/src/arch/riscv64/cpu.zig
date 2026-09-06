@@ -41,16 +41,15 @@ pub inline fn syncStores() void {
 }
 
 pub inline fn getPerCpu() u64 {
-    var val: u64 = undefined;
-    asm volatile ("mv %[v], tp"
-        : [v] "=r" (val),
+    const anchor_ptr = asm volatile ("csrr %[v], sscratch"
+        : [v] "=r" (-> u64),
     );
-    return val;
+    return @as(*const kernel.arch.interrupts.TrapAnchor, @ptrFromInt(anchor_ptr)).cpu_context;
 }
 
 pub inline fn setPerCpu(val: u64) void {
-    asm volatile ("mv tp, %[v]"
-        :
-        : [v] "r" (val),
+    const anchor_ptr = asm volatile ("csrr %[v], sscratch"
+        : [v] "=r" (-> u64),
     );
+    @as(*kernel.arch.interrupts.TrapAnchor, @ptrFromInt(anchor_ptr)).cpu_context = val;
 }

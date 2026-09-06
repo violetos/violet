@@ -18,13 +18,13 @@ const std = @import("std");
 
 // --- arch/riscv64/registers.zig --- //
 
-inline fn csrRead(comptime name: []const u8) u64 {
+pub inline fn csrRead(comptime name: []const u8) u64 {
     return asm volatile ("csrr %[ret], " ++ name
         : [ret] "=r" (-> u64),
     );
 }
 
-inline fn csrWrite(comptime name: []const u8, value: u64) void {
+pub inline fn csrWrite(comptime name: []const u8, value: u64) void {
     asm volatile ("csrw " ++ name ++ ", %[val]"
         :
         : [val] "r" (value),
@@ -49,5 +49,34 @@ pub const Satp = packed struct(u64) {
 
     pub inline fn store(self: Satp) void {
         csrWrite("satp", @bitCast(self));
+    }
+};
+
+pub const Sstatus = packed struct(u64) {
+    _reserved0: u1 = 0,
+    sie: bool = false,
+    _reserved1: u3 = 0,
+    spie: bool = false,
+    ube: bool = false,
+    _reserved2: u1 = 0,
+    spp: enum(u1) { user = 0, supervisor = 1 } = .user,
+    vs: u2 = 0,
+    _reserved3: u2 = 0,
+    fs: enum(u2) { off = 0, initial = 1, clean = 2, dirty = 3 } = .off,
+    xs: u2 = 0,
+    _reserved4: u1 = 0,
+    sum: bool = false,
+    mxr: bool = false,
+    _reserved5: u12 = 0,
+    uxl: u2 = 0,
+    _reserved6: u29 = 0,
+    sd: bool = false,
+
+    pub inline fn load() Sstatus {
+        return @bitCast(csrRead("sstatus"));
+    }
+
+    pub inline fn store(self: Sstatus) void {
+        csrWrite("sstatus", @bitCast(self));
     }
 };
