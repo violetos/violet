@@ -183,6 +183,259 @@ pub const Madt = extern struct {
     pub const SIGNATURE = "APIC";
 
     header: SdtHeader,
+    local_interrupt_controller_address: u32,
+    flags: Flags,
+
+    pub const Flags = packed struct(u32) {
+        pcat_compat: bool = false,
+        _reserved: u31 = 0,
+    };
+
+    pub fn iterator(self: *const Madt) Iterator {
+        const base: [*]const u8 = @ptrCast(self);
+        return .{
+            .current = base + @sizeOf(Madt),
+            .end = base + self.header.length,
+        };
+    }
+
+    pub const Record = union(enum) {
+        local_apic: *const LocalApic,
+        io_apic: *const IoApic,
+        interrupt_source_override: *const InterruptSourceOverride,
+        nmi_source: *const NmiSource,
+        local_apic_nmi: *const LocalApicNmi,
+        local_apic_address_override: *const LocalApicAddressOverride,
+        local_x2apic: *const LocalX2Apic,
+        local_x2apic_nmi: *const LocalX2ApicNmi,
+        gicc: *const Gicc,
+        gicd: *const Gicd,
+        gic_msi_frame: *const GicMsiFrame,
+        gicr: *const Gicr,
+        gic_its: *const GicIts,
+        riscv_intc: *const RiscvIntc,
+        unknown: *const RecordHeader,
+    };
+
+    pub const Iterator = struct {
+        current: [*]const u8,
+        end: [*]const u8,
+
+        pub fn next(self: *Iterator) ?Record {
+            if (@intFromPtr(self.current) >= @intFromPtr(self.end)) return null;
+
+            const header: *const RecordHeader = @ptrCast(@alignCast(self.current));
+
+            if (header.length < @sizeOf(RecordHeader)) return null;
+
+            self.current += header.length;
+
+            return switch (header.record_type) {
+                .local_apic => if (header.cast(LocalApic)) |p| .{ .local_apic = p } else .{ .unknown = header },
+                .io_apic => if (header.cast(IoApic)) |p| .{ .io_apic = p } else .{ .unknown = header },
+                .interrupt_source_override => if (header.cast(InterruptSourceOverride)) |p| .{ .interrupt_source_override = p } else .{ .unknown = header },
+                .nmi_source => if (header.cast(NmiSource)) |p| .{ .nmi_source = p } else .{ .unknown = header },
+                .local_apic_nmi => if (header.cast(LocalApicNmi)) |p| .{ .local_apic_nmi = p } else .{ .unknown = header },
+                .local_apic_address_override => if (header.cast(LocalApicAddressOverride)) |p| .{ .local_apic_address_override = p } else .{ .unknown = header },
+                .local_x2apic => if (header.cast(LocalX2Apic)) |p| .{ .local_x2apic = p } else .{ .unknown = header },
+                .local_x2apic_nmi => if (header.cast(LocalX2ApicNmi)) |p| .{ .local_x2apic_nmi = p } else .{ .unknown = header },
+                .gicc => if (header.cast(Gicc)) |p| .{ .gicc = p } else .{ .unknown = header },
+                .gicd => if (header.cast(Gicd)) |p| .{ .gicd = p } else .{ .unknown = header },
+                .gic_msi_frame => if (header.cast(GicMsiFrame)) |p| .{ .gic_msi_frame = p } else .{ .unknown = header },
+                .gicr => if (header.cast(Gicr)) |p| .{ .gicr = p } else .{ .unknown = header },
+                .gic_its => if (header.cast(GicIts)) |p| .{ .gic_its = p } else .{ .unknown = header },
+                .riscv_intc => if (header.cast(RiscvIntc)) |p| .{ .riscv_intc = p } else .{ .unknown = header },
+                else => .{ .unknown = header },
+            };
+        }
+    };
+
+    pub const RecordHeader = extern struct {
+        record_type: Type,
+        length: u8,
+
+        pub const Type = enum(u8) {
+            local_apic = 0,
+            io_apic = 1,
+            interrupt_source_override = 2,
+            nmi_source = 3,
+            local_apic_nmi = 4,
+            local_apic_address_override = 5,
+            io_sapic = 6,
+            local_sapic = 7,
+            platform_interrupt_sources = 8,
+            local_x2apic = 9,
+            local_x2apic_nmi = 10,
+            gicc = 11,
+            gicd = 12,
+            gic_msi_frame = 13,
+            gicr = 14,
+            gic_its = 15,
+            riscv_intc = 24,
+            _,
+        };
+
+        pub fn cast(self: *const RecordHeader, comptime T: type) ?*const T {
+            if (self.length < @sizeOf(T)) return null;
+            return @ptrCast(@alignCast(self));
+        }
+    };
+
+    pub const LocalApicFlags = packed struct(u32) {
+        enabled: bool = false,
+        online_capable: bool = false,
+        _reserved: u30 = 0,
+    };
+
+    pub const MpsIntiFlags = packed struct(u16) {
+        polarity: u2 = 0, // 0 = Conforms, 1 = Active High, 3 = Active Low
+        trigger_mode: u2 = 0, // 0 = Conforms, 1 = Edge, 3 = Level
+        _reserved: u12 = 0,
+    };
+
+    pub const LocalApic = extern struct {
+        header: RecordHeader,
+        acpi_processor_uid: u8,
+        apic_id: u8,
+        flags: LocalApicFlags,
+    };
+
+    pub const IoApic = extern struct {
+        header: RecordHeader,
+        io_apic_id: u8,
+        _reserved: u8,
+        io_apic_address: u32,
+        global_system_interrupt_base: u32,
+    };
+
+    pub const InterruptSourceOverride = extern struct {
+        header: RecordHeader,
+        bus: u8,
+        source: u8,
+        global_system_interrupt: u32 align(2),
+        flags: MpsIntiFlags,
+    };
+
+    pub const NmiSource = extern struct {
+        header: RecordHeader,
+        flags: MpsIntiFlags,
+        global_system_interrupt: u32,
+    };
+
+    pub const LocalApicNmi = extern struct {
+        header: RecordHeader,
+        acpi_processor_uid: u8,
+        flags: MpsIntiFlags align(1),
+        local_apic_lint: u8,
+    };
+
+    pub const LocalApicAddressOverride = extern struct {
+        header: RecordHeader,
+        _reserved: u16,
+        local_apic_address: u64 align(4),
+    };
+
+    pub const LocalX2Apic = extern struct {
+        header: RecordHeader,
+        _reserved: u16,
+        x2apic_id: u32,
+        flags: LocalApicFlags,
+        acpi_processor_uid: u32,
+    };
+
+    pub const LocalX2ApicNmi = extern struct {
+        header: RecordHeader,
+        flags: MpsIntiFlags,
+        acpi_processor_uid: u32,
+        local_x2apic_lint: u8,
+        _reserved: [3]u8,
+    };
+
+    pub const Gicc = extern struct {
+        header: RecordHeader,
+        _reserved1: u16,
+        cpu_interface_number: u32,
+        acpi_processor_uid: u32,
+        flags: LocalApicFlags,
+        parking_protocol_version: u32,
+        performance_interrupt_gsiv: u32,
+        parked_address: u64,
+        physical_base_address: u64,
+        gicv: u64,
+        gich: u64,
+        vgic_maintenance_interrupt: u32,
+        gicr_base_address: u64 align(4),
+        mpidr: u64 align(4),
+        processor_power_efficiency_class: u8,
+        _reserved2: u8,
+        spe_overflow_interrupt: u16,
+    };
+
+    pub const Gicd = extern struct {
+        header: RecordHeader,
+        _reserved1: u16,
+        gic_id: u32,
+        physical_base_address: u64,
+        system_vector_base: u32,
+        gic_version: u8,
+        _reserved2: [3]u8,
+    };
+
+    pub const GicMsiFrame = extern struct {
+        header: RecordHeader,
+        _reserved1: u16,
+        gic_msi_frame_id: u32,
+        physical_base_address: u64,
+        flags: u32,
+        spi_count: u16,
+        spi_base: u16,
+    };
+
+    pub const Gicr = extern struct {
+        header: RecordHeader,
+        _reserved: u16,
+        discovery_range_base_address: u64 align(4),
+        discovery_range_length: u32,
+    };
+
+    pub const GicIts = extern struct {
+        header: RecordHeader,
+        _reserved: u16,
+        gic_its_id: u32,
+        physical_base_address: u64 align(4),
+        _reserved2: u32,
+    };
+
+    pub const RiscvIntc = extern struct {
+        header: RecordHeader,
+        version: u8,
+        _reserved: u8,
+        flags: LocalApicFlags,
+        hart_id: u64 align(4),
+        acpi_processor_uid: u32,
+    };
+
+    comptime {
+        if (@sizeOf(Madt) != 44) @compileError("Madt should have a size of 44 (SdtHeader + 8 bytes)");
+        if (@offsetOf(Madt, "local_interrupt_controller_address") != 36) @compileError("Madt.local_interrupt_controller_address offset mismatch");
+
+        if (@sizeOf(LocalApic) != 8) @compileError("LocalApic size mismatch");
+        if (@sizeOf(IoApic) != 12) @compileError("IoApic size mismatch");
+        if (@sizeOf(InterruptSourceOverride) != 10) @compileError("InterruptSourceOverride size mismatch");
+        if (@sizeOf(NmiSource) != 8) @compileError("NmiSource size mismatch");
+        if (@sizeOf(LocalApicNmi) != 6) @compileError("LocalApicNmi size mismatch");
+        if (@sizeOf(LocalApicAddressOverride) != 12) @compileError("LocalApicAddressOverride size mismatch");
+        if (@sizeOf(LocalX2Apic) != 16) @compileError("LocalX2Apic size mismatch");
+        if (@sizeOf(LocalX2ApicNmi) != 12) @compileError("LocalX2ApicNmi size mismatch");
+
+        if (@sizeOf(Gicc) != 80) @compileError("Gicc size mismatch (expected 80 bytes for ACPI 6.0+)");
+        if (@sizeOf(Gicd) != 24) @compileError("Gicd size mismatch");
+        if (@sizeOf(GicMsiFrame) != 24) @compileError("GicMsiFrame size mismatch");
+        if (@sizeOf(Gicr) != 16) @compileError("Gicr size mismatch");
+        if (@sizeOf(GicIts) != 20) @compileError("GicIts size mismatch");
+
+        if (@sizeOf(RiscvIntc) != 20) @compileError("RiscvIntc size mismatch (expected 20 bytes for ACPI 6.5)");
+    }
 };
 
 pub const Fadt = extern struct {
