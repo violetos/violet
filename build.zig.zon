@@ -12,7 +12,7 @@
         },
         .limine_binary = .{
             .url = "https://github.com/YiraSan/Limine/releases/download/v12.8.1/limine-binary.tar.xz",
-            .hash = "N-V-__8AAGDzVQDzrEIC3ezWPFE0QaAEIjQIftiWlqr9JKEK",
+            .hash = "N-V-__8AAGDzVQA7d3nhY8OoftXjKb7JlPYMu9zwWvS0TBV_",
         },
         .fatfs = .{
             .url = "git+https://github.com/abbrev/fatfs#ab992fcf2926b8a1ee3f0a8f9cefb6584174100d",
