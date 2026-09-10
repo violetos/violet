@@ -290,9 +290,9 @@ const LowerAttrsView = packed struct(u64) {
     _ignored_low: u2 = 0, // bits 0-1
 
     attr_index: enum(u3) { // bits 2-4
-        writeback = 0,
-        write_combining = 1,
-        device = 2,
+        writeback = arch.virt.mair.attr(arch.registers.MAIR.NORMAL_WRITEBACK_NONTRANSIENT),
+        write_combining = arch.virt.mair.attr(arch.registers.MAIR.NORMAL_NONCACHEABLE),
+        device = arch.virt.mair.attr(arch.registers.MAIR.DEVICE_nGnRnE),
     } = .writeback,
 
     non_secure: bool = false, // bit 5

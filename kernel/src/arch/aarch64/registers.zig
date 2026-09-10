@@ -71,7 +71,7 @@ pub inline fn storeVbarEl1(exception_vector_table: u64) void {
     asm volatile ("msr vbar_el1, %[input]"
         :
         : [input] "r" (exception_vector_table),
-    );
+        : .{ .memory = true });
 }
 
 pub inline fn loadFarEl1() u64 {
@@ -135,8 +135,8 @@ pub inline fn storeTtbr1El1(l0_table: u64) void {
         : .{ .memory = true });
 }
 
-/// Translation Control Register (EL1)
-pub const TCR_EL1 = packed struct(u64) {
+/// Translation Control Register
+pub const TCR = packed struct(u64) {
     /// The size offset of the memory region addressed by TTBR0_EL1. The region size is 2(64-t0sz) bytes.
     t0sz: u6, // bit 0-5
 
@@ -359,6 +359,14 @@ pub const TCR_EL1 = packed struct(u64) {
 
     _reserved3: u2 = 0, // bit 62-63
 
+    pub const GranuleSize = enum(u2) {
+        @"4kb" = 0b00,
+        @"64kb" = 0b01,
+        @"16kb" = 0b10,
+        /// Could be implementation defined.
+        _reserved0 = 0b11,
+    };
+
     pub fn load() @This() {
         return asm volatile ("mrs %[output], tcr_el1"
             : [output] "=r" (-> @This()),
@@ -366,14 +374,16 @@ pub const TCR_EL1 = packed struct(u64) {
     }
 
     pub fn store(self: @This()) void {
-        asm volatile ("msr tcr_el1, %[input]"
+        asm volatile (
+            \\ msr tcr_el1, %[input]
             :
             : [input] "r" (self),
-        );
+            : .{ .memory = true });
     }
 };
 
-pub const ESR_EL1 = packed struct(u64) {
+/// Exception Syndrome Register
+pub const ESR = packed struct(u64) {
     iss: packed union { // bits 0-24
         unknown_reason: packed struct(u25) { _reserved0: u25 },
         brk_aarch64: packed struct(u25) {
@@ -549,8 +559,8 @@ pub const ESR_EL1 = packed struct(u64) {
     }
 };
 
-/// Saved Program Status Register (EL1)
-pub const SPSR_EL1 = packed struct(u64) {
+/// Saved Program Status Register
+pub const SPSR = packed struct(u64) {
     /// AArch64 Exception level and selected Stack Pointer.
     mode: enum(u4) { // bit 0-3
         el0 = 0b0000,
@@ -578,15 +588,16 @@ pub const SPSR_EL1 = packed struct(u64) {
     }
 
     pub fn store(self: @This()) void {
-        asm volatile ("msr spsr_el1, %[input]"
+        asm volatile (
+            \\ msr spsr_el1, %[input]
             :
             : [input] "r" (self),
-        );
+            : .{ .memory = true });
     }
 };
 
-/// Memory Attribute Indirection Register (EL1)
-pub const MAIR_EL1 = packed struct(u64) {
+/// Memory Attribute Indirection Register
+pub const MAIR = packed struct(u64) {
     attr0: u8 = 0,
     attr1: u8 = 0,
     attr2: u8 = 0,
@@ -607,6 +618,18 @@ pub const MAIR_EL1 = packed struct(u64) {
     pub const NORMAL_WRITETHROUGH_NONTRANSIENT = 0b1011_1011;
     pub const NORMAL_NONCACHEABLE = 0b0100_0100;
 
+    pub inline fn attr(comptime self: *const @This(), comptime match: comptime_int) comptime_int {
+        if (self.attr0 == match) return 0;
+        if (self.attr1 == match) return 1;
+        if (self.attr2 == match) return 2;
+        if (self.attr3 == match) return 3;
+        if (self.attr4 == match) return 4;
+        if (self.attr5 == match) return 5;
+        if (self.attr6 == match) return 6;
+        if (self.attr7 == match) return 7;
+        unreachable;
+    }
+
     pub fn load() @This() {
         return asm volatile ("mrs %[output], mair_el1"
             : [output] "=r" (-> @This()),
@@ -614,9 +637,10 @@ pub const MAIR_EL1 = packed struct(u64) {
     }
 
     pub fn store(self: @This()) void {
-        asm volatile ("msr mair_el1, %[input]"
+        asm volatile (
+            \\ msr mair_el1, %[input]
             :
             : [input] "r" (self),
-        );
+            : .{ .memory = true });
     }
 };

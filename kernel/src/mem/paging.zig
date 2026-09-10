@@ -88,13 +88,11 @@ pub const entries_per_table: u64 = page_size / @sizeOf(u64);
 pub const bits_per_level: u64 = std.math.log2_int(u64, entries_per_table);
 pub const offset_bits: u64 = std.math.log2_int(u64, page_size);
 
-pub const va_bits: u6 = blk: {
-    const bits = paging.offset_bits + (paging.page_levels * paging.bits_per_level);
-    std.debug.assert(bits < 64);
-    break :blk @intCast(bits);
-};
+pub const va_bits: u6 = @intCast(paging.offset_bits + (paging.page_levels * paging.bits_per_level));
 
 comptime {
+    if (va_bits > 48) @compileError("doesn't support VA greather than 48 bits.");
+
     std.debug.assert(std.math.isPowerOfTwo(entries_per_table));
     std.debug.assert(offset_bits + (page_levels - 1) * bits_per_level < 64);
 }

@@ -45,7 +45,7 @@ extern fn extend_frame(frame: *ReducedFrame) callconv(.{ .aarch64_aapcs = .{} })
 
 const ResumeMode = union(enum) {
     via_ret,
-    via_eret: arch.registers.SPSR_EL1,
+    via_eret: arch.registers.SPSR,
 };
 
 inline fn captureFrame(frame: *ReducedFrame, resume_mode: ResumeMode) void {
@@ -110,10 +110,10 @@ export fn internal_exit(old_frame: *ReducedFrame) callconv(.{ .aarch64_aapcs = .
     restoreCurrent(old_frame, .via_ret);
 }
 
-fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR_EL1) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
+fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     captureFrame(frame, .{ .via_eret = saved_spsr });
 
-    const esr = arch.registers.ESR_EL1.load();
+    const esr = arch.registers.ESR.load();
 
     switch (esr.ec) {
         .svc_inst_aarch64 => {
@@ -160,7 +160,7 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR_EL1) callco
     restoreCurrent(frame, .{ .via_eret = saved_spsr });
 }
 
-fn irqHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR_EL1) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
+fn irqHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     captureFrame(frame, .{ .via_eret = saved_spsr });
 
     const ctrl = drivers.intc.active_controller orelse {
@@ -177,16 +177,16 @@ fn irqHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR_EL1) callcon
     restoreCurrent(frame, .{ .via_eret = saved_spsr });
 }
 
-fn unexpectedException(_: *ReducedFrame, saved_spsr: arch.registers.SPSR_EL1) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
+fn unexpectedException(_: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     _ = saved_spsr;
 
     log.err("unexpected exception (fiq/serror)", .{});
-    arch.registers.ESR_EL1.load().dump();
+    arch.registers.ESR.load().dump();
     arch.cpu.halt();
 }
 
 fn nestedSyncHandler(esr_raw: u64, far: u64) callconv(.{ .aarch64_aapcs = .{} }) void {
-    const esr: arch.registers.ESR_EL1 = @bitCast(esr_raw);
+    const esr: arch.registers.ESR = @bitCast(esr_raw);
 
     switch (esr.ec) {
         .data_abort_same_el, .data_abort_lower_el => {
@@ -211,7 +211,7 @@ fn nestedSyncHandler(esr_raw: u64, far: u64) callconv(.{ .aarch64_aapcs = .{} })
 }
 
 fn unexpectedNestedException(esr_raw: u64, _: u64) callconv(.{ .aarch64_aapcs = .{} }) void {
-    const esr: arch.registers.ESR_EL1 = @bitCast(esr_raw);
+    const esr: arch.registers.ESR = @bitCast(esr_raw);
     log.err("unexpected nested exception (irq/fiq/serror)", .{});
     esr.dump();
     arch.cpu.halt();
@@ -282,7 +282,8 @@ pub const InterruptsContext = struct {
 
         if (kernel.cpu.CpuContext.current()) |ctx| {
             if (&ctx.interrupts_context == self) {
-                arch.cpu.setPerCpu(@intFromPtr(ctx));
+                arch.registers.storeSpEl1(self.kernel_stack_top);
+                arch.cpu.setPerCpu(@intFromPtr(mem.updatePtr(kernel.cpu.CpuContext, ctx)));
             }
         }
     }
@@ -293,8 +294,8 @@ pub const InterruptsContext = struct {
 pub const ReducedFrame = extern struct {
     xregs: [30]u64, // x0..x29
     link_register: u64, // x30
-    program_counter: u64, // elr_el1 OR return_address
-    spsr_el1: u64,
+    program_counter: u64, // elr OR return_address
+    spsr: u64,
     tpidr_el0: u64,
     stack_pointer: u64, // sp_el0
     _reserved: u64 = 0, // alignment padding
@@ -312,7 +313,7 @@ comptime {
     std.debug.assert(@sizeOf(ReducedFrame) == 288);
     std.debug.assert(@offsetOf(ReducedFrame, "link_register") == 240);
     std.debug.assert(@offsetOf(ReducedFrame, "program_counter") == 248);
-    std.debug.assert(@offsetOf(ReducedFrame, "spsr_el1") == 256);
+    std.debug.assert(@offsetOf(ReducedFrame, "spsr") == 256);
     std.debug.assert(@offsetOf(ReducedFrame, "tpidr_el0") == 264);
     std.debug.assert(@offsetOf(ReducedFrame, "stack_pointer") == 272);
 }

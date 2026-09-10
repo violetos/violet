@@ -27,6 +27,12 @@ const paging = mem.paging;
 
 // --- arch/aarch64/virt.zig --- //
 
+pub const mair = arch.registers.MAIR{
+    .attr0 = arch.registers.MAIR.NORMAL_WRITEBACK_NONTRANSIENT,
+    .attr1 = arch.registers.MAIR.NORMAL_NONCACHEABLE,
+    .attr2 = arch.registers.MAIR.DEVICE_nGnRnE,
+};
+
 pub fn prepare() !void {
     (arch.registers.MAIR_EL1{
         .attr0 = arch.registers.MAIR_EL1.NORMAL_WRITEBACK_NONTRANSIENT,
