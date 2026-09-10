@@ -187,8 +187,8 @@ inline fn userland_fn(code: Code, arg1: u64, arg2: u64, arg3: u64, arg4: u64, ar
     };
 }
 
-pub inline fn syscall(code: Code, args: anytype) Error!ResultVals {
-    const builded_args = buildArgs(args);
+pub fn syscall(code: Code, args: anytype) Error!ResultVals {
+    const builded_args = comptime buildArgs(args);
     const full_result: FullResult = if (basalt.system.is_module)
         @call(.auto, kit.call_system, .{code} ++ builded_args)
     else
@@ -268,26 +268,26 @@ inline fn toU64(value: anytype) u64 {
     };
 }
 
-inline fn buildArgs(args: anytype) struct { u64, u64, u64, u64, u64, u64, u64 } {
+fn buildArgs(args: anytype) struct { u64, u64, u64, u64, u64, u64, u64 } {
     const T = @TypeOf(args);
     comptime validateArgsType(T);
 
     var result: [7]u64 = @splat(0);
-    switch (@typeInfo(T)) {
+    comptime switch (@typeInfo(T)) {
         .@"struct" => |s| {
             if (s.is_tuple) {
-                inline for (s.fields, 0..) |f, i| {
+                for (s.fields, 0..) |f, i| {
                     result[i] = toU64(@field(args, f.name));
                 }
             } else {
-                inline for (s.fields) |f| {
+                for (s.fields) |f| {
                     result[argIndex(f.name)] = toU64(@field(args, f.name));
                 }
             }
         },
         .int => result[0] = toU64(args),
         else => unreachable,
-    }
+    };
 
     return .{ result[0], result[1], result[2], result[3], result[4], result[5], result[6] };
 }
