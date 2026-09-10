@@ -44,6 +44,7 @@ pub inline fn syncMem() void {
 pub inline fn syncStores() void {
     asm volatile (
         \\ dsb ishst
+        \\ isb
         ::: .{ .memory = true });
 }
 
