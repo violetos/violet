@@ -136,7 +136,7 @@ pub fn stage2_entry() callconv(.c) noreturn {
 
 const requested_mode: limine.PagingMode = switch (builtin.cpu.arch) {
     .aarch64 => switch (build_options.page_levels) {
-        3, 4 => .@"4lvl",
+        2, 3, 4 => .@"4lvl",
         5 => .@"5lvl",
         else => @panic("this level is unsupported on aarch64"),
     },

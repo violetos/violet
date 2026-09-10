@@ -33,11 +33,13 @@ pub fn build(b: *std.Build) !void {
 
     const img_root = createImgRoot(b, arch);
     {
+        const qemu_page_size: u64 = if (arch == .aarch64) 16 else 4;
         const page_size = b.option(u64, "page_size", "4, 16, 64") orelse
-            if (board) |bo| bo.getSoC().getPageSize() else 4;
+            if (board) |bo| bo.getSoC().getPageSize() else qemu_page_size;
 
-        const page_levels = b.option(u8, "page_levels", "3, 4, 5") orelse
-            if (board) |bo| bo.getSoC().getPageLevels() else 4;
+        const qemu_page_levels: u64 = if (arch == .aarch64) 3 else 4;
+        const page_levels = b.option(u8, "page_levels", "2, 3, 4, 5") orelse
+            if (board) |bo| bo.getSoC().getPageLevels() else qemu_page_levels;
 
         const drivers = b.option([]const u8, "drivers", "kernel drivers set") orelse
             if (board) |bo|
@@ -231,7 +233,7 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
         switch (arch) {
             .aarch64 => run_cmd.addArgs(&.{
                 "-machine", "virt,secure=off,virtualization=off,pflash0=pflash0,pflash1=pflash1",
-                "-cpu",     "cortex-a57",
+                "-cpu",     "max",
             }),
             .riscv64 => run_cmd.addArgs(&.{
                 "-machine", "virt,pflash0=pflash0,pflash1=pflash1",
