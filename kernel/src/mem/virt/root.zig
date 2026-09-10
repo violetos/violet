@@ -35,6 +35,8 @@ pub const Space = @import("Space.zig");
 // --- mem/virt.zig --- //
 
 pub var kernel_space: Space.Ref = undefined;
+pub var kernel_pagetable: u64 = undefined;
+pub var kernel_start_pa: u64 = undefined;
 
 export var address_request: limine.ExecutableAddressRequest linksection(".limine_requests") = .{};
 
@@ -52,6 +54,8 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
 
     const physical_base: u64 = address_request.response.?.physical_base;
     const space: *Space = kernel_space.payload();
+
+    kernel_start_pa = physical_base;
 
     try map(space, KernelMemory.rodataRange(), physical_base, .{
         .writable = false,
@@ -113,7 +117,11 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
         break :blk try space.alloc(aligned_size, .{ .owned = ref }, false, 0);
     };
 
-    const high_half_pa = kernel_space.payload().page_table.root_pa;
+    kernel_pagetable = kernel_space.payload().page_table.root_pa;
+
+    try kernel.cpu.allocInitStacks();
+
+    const init_stack_top = kernel.cpu.CpuContext.current().?.init_stack_top;
 
     try kernel.arch.virt.prepare();
 
@@ -129,7 +137,10 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
         mem.phys.updateHhdm();
     }
 
-    try kernel.arch.virt.configure(high_half_pa);
+    kernel.arch.virt.configure(
+        init_stack_top,
+        @intFromPtr(&kernel.boot.stage2_entry),
+    );
 }
 
 inline fn map(space: *Space, range: KernelMemory.Range, physical_base: u64, permissions: paging.Permissions) !void {
@@ -167,7 +178,7 @@ pub const KernelMemory = struct {
         }
 
         pub inline fn pages(self: Range) u64 {
-            return self.size() / paging.page_size;
+            return std.mem.alignForward(u64, self.size(), paging.page_size) / paging.page_size;
         }
 
         pub inline fn offset(self: Range, base: u64) u64 {
@@ -204,11 +215,17 @@ pub const KernelMemory = struct {
     }
 };
 
-pub inline fn mmio(base: u64, size: u64) !u64 {
-    const k_space: *Space = kernel_space.payload();
+pub fn mmio(base: u64, size: u64) !u64 {
+    const k_space = kernel_space.payload();
 
-    _, const ref = try OwnedObject.map.insert(OwnedObject{
-        .length = size / paging.page_size,
+    const base_aligned = std.mem.alignBackward(u64, base, paging.page_size);
+    const offset = base - base_aligned;
+
+    const total_size = size + offset;
+    const aligned_size = std.mem.alignForward(u64, total_size, paging.page_size);
+
+    _, var ref = try OwnedObject.map.insert(.{
+        .length = aligned_size / paging.page_size,
         .mem_type = .device,
         .permissions = .{
             .executable = false,
@@ -216,8 +233,10 @@ pub inline fn mmio(base: u64, size: u64) !u64 {
             .user = false,
             .writable = true,
         },
-        .physical_mapping = .{ .contiguous = base },
+        .physical_mapping = .{ .contiguous = base_aligned },
     });
+    errdefer ref.release();
 
-    return k_space.alloc(size, .{ .owned = ref }, false, 0);
+    const va_base = try k_space.alloc(aligned_size, .{ .owned = ref }, false, 0);
+    return va_base + offset;
 }

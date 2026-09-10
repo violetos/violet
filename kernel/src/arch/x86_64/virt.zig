@@ -29,6 +29,19 @@ const paging = mem.paging;
 
 pub fn prepare() !void {}
 
-pub fn configure(high_half_pa: u64) !void {
-    arch.paging.activate(null, high_half_pa);
+pub fn configure(
+    sp: u64,
+    goto_address: u64,
+) void {
+    arch.paging.activate(null, mem.virt.kernel_pagetable);
+
+    asm volatile (
+        \\ movq %[sp], %%rsp
+        \\ jmp *%[goto]
+        :
+        : [sp] "r" (sp),
+          [goto] "r" (goto_address),
+    );
 }
+
+pub fn clean() !void {}

@@ -26,7 +26,16 @@ const mem = kernel.mem;
 const paging = mem.paging;
 
 comptime {
-    if (paging.page_levels == 4) std.debug.assert(paging.page_size <= 16 * 1024);
+    const grain_size = paging.page_size / 1024;
+
+    // 16KiB / 4LVL is missing because virt currently doesn't support truncated top level.
+
+    switch (paging.page_levels) {
+        5, 4 => std.debug.assert(grain_size == 4),
+        3 => std.debug.assert(grain_size == 4 or grain_size == 16),
+        2 => std.debug.assert(grain_size == 16 or grain_size == 64),
+        else => unreachable,
+    }
 }
 
 // --- arch/aarch64/paging.zig --- //

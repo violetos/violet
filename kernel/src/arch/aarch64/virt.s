@@ -12,38 +12,45 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// --- dependencies --- //
+.arch armv8-a
 
-const std = @import("std");
+.section .text
 
-// --- imports --- //
+.global virt_switch
+.type virt_switch, %function
+virt_switch:
+    // x0 = mair
+    // x1 = tcr
+    // x2 = ttbr1
+    // x3 = sp
+    // x4 = trampoline_pa
+    // x5 = goto_address
 
-const kernel = @import("root");
+    br x4
 
-const arch = kernel.arch;
+.globl virt_trampoline
+virt_trampoline:
+    mrs x6, sctlr_el1
+    bic x6, x6, #1
+    msr sctlr_el1, x6
+    isb
 
-const mem = kernel.mem;
-const paging = mem.paging;
+    msr mair_el1, x0
+    msr ttbr1_el1, x2
+    msr tcr_el1, x1
+    isb
+    dsb sy
+    isb
 
-// --- arch/riscv64/virt.zig --- //
+    tlbi vmalle1
+    dsb nsh
+    isb
 
-pub fn prepare() !void {}
+    mov sp, x3
 
-pub fn configure(
-    sp: u64,
-    goto_address: u64,
-) noreturn {
-    arch.paging.activate(null, mem.virt.kernel_pagetable);
+    mrs x6, sctlr_el1
+    orr x6, x6, #1
+    msr sctlr_el1, x6
+    isb
 
-    asm volatile (
-        \\ mv sp, %[sp]
-        \\ jr %[goto]
-        :
-        : [sp] "r" (sp),
-          [goto] "r" (goto_address),
-    );
-
-    unreachable;
-}
-
-pub fn clean() !void {}
+    br x5

@@ -94,6 +94,10 @@ export fn kernel_entry() callconv(.c) noreturn {
         std.debug.panic("mem.virt.init failed: {s}", .{@errorName(err)});
     };
 
+    arch.cpu.halt();
+}
+
+pub fn stage2_entry() callconv(.c) noreturn {
     drivers.runStage(.stage2, getXsdt(), null);
 
     kernel.syscall.init() catch |err| {

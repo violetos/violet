@@ -41,6 +41,7 @@ pub const CpuContext = struct {
     index: usize = 0,
     hardware_id: u64,
     processor_id: u64,
+    init_stack_top: u64,
 
     interrupts_context: arch.interrupts.InterruptsContext = undefined,
     phys_context: mem.phys.PhysContext = undefined,
@@ -61,6 +62,7 @@ pub const CpuContext = struct {
         const index = try cpu_contexts.append(.{
             .hardware_id = hardwareId(mp_info),
             .processor_id = mp_info.processor_id,
+            .init_stack_top = 0,
         });
         const cpu_context = cpu_contexts.getPtr(index).?;
         cpu_context.index = index;
@@ -131,4 +133,35 @@ pub fn updateHhdm() void {
     }
 
     cpu_contexts.updateHhdm();
+}
+
+pub fn allocInitStacks() !void {
+    const kernel_space: *mem.virt.Space = mem.virt.kernel_space.payload();
+
+    var cpu_it = cpu_contexts.iterator();
+    while (cpu_it.next()) |context| {
+        const stack_size = 64 * 1024; // 64 KiB
+        const pages_count = stack_size / mem.paging.page_size;
+        const stack_base_pa = try mem.phys.allocContiguous(pages_count);
+
+        _, var ref = try mem.virt.OwnedObject.map.insert(.{
+            .length = pages_count,
+            .mem_type = .writeback,
+            .permissions = .{
+                .executable = false,
+                .global = true,
+                .user = false,
+                .writable = true,
+            },
+            .physical_mapping = .{ .contiguous = stack_base_pa },
+        });
+        errdefer ref.release();
+
+        const stack_base_va = try kernel_space.alloc(stack_size, .{
+            .owned = ref,
+        }, true, 0);
+
+        const stack_top_va = stack_base_va + stack_size;
+        context.init_stack_top = stack_top_va;
+    }
 }
