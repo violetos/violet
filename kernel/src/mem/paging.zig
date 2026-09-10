@@ -534,7 +534,7 @@ comptime {
     }
 
     switch (build_options.page_levels) {
-        3, 4, 5 => {},
+        2, 3, 4, 5 => {},
         else => @compileError("Invalid page_levels"),
     }
 }

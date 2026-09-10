@@ -70,22 +70,27 @@ pub fn availablePages() usize {
 }
 
 pub const PhysContext = struct {
-    const CACHE_LEN = PAGE_SIZE / @sizeOf(u64);
-    const CACHE_TYPE = [CACHE_LEN]u64;
-    preheat_cache: *CACHE_TYPE,
+    const CACHE_LEN: usize = switch (PAGE_SIZE) {
+        4 * 1024 => 256,
+        16 * 1024 => 128,
+        64 * 1024 => 64,
+        else => unreachable,
+    };
+
+    preheat_cache: *[CACHE_LEN]u64,
     preheat_len: usize,
-    recycle_cache: *CACHE_TYPE,
+    recycle_cache: *[CACHE_LEN]u64,
     recycle_len: usize,
 
     pub fn init(self: *PhysContext) !void {
         var page: [1]u64 = undefined;
-
         try _allocNonContiguous(&page);
-        self.preheat_cache = mem.toHhdm(CACHE_TYPE, page[0]);
+        const base_va: [*]u64 = @ptrCast(mem.toHhdm(u64, page[0]));
+
+        self.preheat_cache = base_va[0..CACHE_LEN];
         self.preheat_len = CACHE_LEN;
 
-        try _allocNonContiguous(&page);
-        self.recycle_cache = mem.toHhdm(CACHE_TYPE, page[0]);
+        self.recycle_cache = base_va[CACHE_LEN .. CACHE_LEN + CACHE_LEN];
         self.recycle_len = 0;
 
         try _allocNonContiguous(self.preheat_cache[0..]);
@@ -102,8 +107,8 @@ pub const PhysContext = struct {
     }
 
     pub fn updateHhdm(self: *PhysContext) void {
-        mem.updateRef(CACHE_TYPE, &self.preheat_cache);
-        mem.updateRef(CACHE_TYPE, &self.recycle_cache);
+        mem.updateRef([CACHE_LEN]u64, &self.preheat_cache);
+        mem.updateRef([CACHE_LEN]u64, &self.recycle_cache);
     }
 };
 
@@ -319,7 +324,7 @@ fn _allocNonContiguous(buffer: []u64) !void {
     defer global_lock.release(.write, int_state);
 
     const to_fill = @min(buffer.len, available_pages);
-    if (to_fill == 0) {
+    if (to_fill < buffer.len) {
         return Error.OutOfMemory;
     }
 

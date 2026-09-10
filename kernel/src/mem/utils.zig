@@ -409,7 +409,6 @@ pub fn SlotMap(comptime Item: type) type {
             }
 
             pub fn updateHhdm(self: *ArcRef) void {
-                mem.updateRef(Self, &self.map);
                 mem.updateRef(Item, &self.item);
             }
         };
@@ -421,6 +420,8 @@ pub fn SlotMap(comptime Item: type) type {
         };
 
         const SlotList = NodeList(Slot, null);
+
+        const ActualItem = if (is_arc) Item.Payload else Item;
 
         pub const Handle = packed struct(u64) {
             generation: u32,
@@ -442,7 +443,7 @@ pub fn SlotMap(comptime Item: type) type {
             self.slots.deinit();
         }
 
-        pub fn insert(self: *Self, item: if (is_arc) Item.Payload else Item) !struct { Handle, if (is_arc) ArcRef else *Item } {
+        pub fn insert(self: *Self, item: ActualItem) !struct { Handle, if (is_arc) ArcRef else *Item } {
             var head: FreeHead = @bitCast(self.free_head.load(.acquire));
 
             while (head.index != SENTINEL) {
@@ -569,8 +570,6 @@ pub fn SlotMap(comptime Item: type) type {
         }
 
         pub fn updateHhdm(self: *Self) void {
-            const ActualItem = if (is_arc) Item.Payload else Item;
-
             if (comptime @hasDecl(ActualItem, "SlotMap_updateHhdm")) {
                 const max_index = self.len.load(.monotonic);
                 for (0..max_index) |i| {

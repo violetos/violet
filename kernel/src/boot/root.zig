@@ -44,7 +44,7 @@ export var framebuffer_request: limine.FramebufferRequest linksection(".limine_r
 
 var xsdt_pa: ?u64 = null;
 
-inline fn getXsdt() ?*const acpi.Xsdt {
+fn getXsdt() ?*const acpi.Xsdt {
     if (xsdt_pa) |pa| {
         return mem.toHhdm(acpi.Xsdt, pa);
     }
