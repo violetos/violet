@@ -36,7 +36,7 @@ pub const Stage = enum {
     stage1,
     /// The virtual memory manager is fully available.
     stage2,
-    /// Interrupt Controller, Scheduler, Syscalls and Timer are initialized.
+    /// before Interrupt Controller, Scheduler, Syscalls and Timer are initialized.
     stage3,
 };
 
