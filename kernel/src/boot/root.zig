@@ -80,12 +80,12 @@ export fn kernel_entry() callconv(.c) noreturn {
         std.debug.panic("mem.phys.init failed: {s}", .{@errorName(err)});
     };
 
-    kernel.cpu.init() catch |err| {
-        std.debug.panic("cpu.init failed: {s}", .{@errorName(err)});
-    };
-
     arch.interrupts.init() catch |err| {
         std.debug.panic("arch.interrupts.init failed: {s}", .{@errorName(err)});
+    };
+
+    kernel.cpu.init() catch |err| {
+        std.debug.panic("cpu.init failed: {s}", .{@errorName(err)});
     };
 
     drivers.runStage(.stage1, getXsdt(), null);
