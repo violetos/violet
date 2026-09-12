@@ -124,15 +124,10 @@ fn getFeaturesAdd(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
         .x86_64 => {
             const Feature = std.Target.x86.Feature;
 
-            features_add.addFeature(@intFromEnum(Feature.popcnt));
             features_add.addFeature(@intFromEnum(Feature.soft_float));
+            features_add.addFeature(@intFromEnum(Feature.fsgsbase));
         },
-        .riscv64 => {
-            const Feature = std.Target.riscv.Feature;
-
-            features_add.addFeature(@intFromEnum(Feature.zicsr));
-            features_add.addFeature(@intFromEnum(Feature.zifencei));
-        },
+        .riscv64 => {},
         else => unreachable,
     }
 
@@ -160,6 +155,9 @@ fn getFeaturesSub(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
 
             features_sub.addFeature(@intFromEnum(Feature.avx));
             features_sub.addFeature(@intFromEnum(Feature.avx2));
+
+            features_sub.addFeature(@intFromEnum(Feature.fma));
+            features_sub.addFeature(@intFromEnum(Feature.f16c));
         },
         .riscv64 => {
             const Feature = std.Target.riscv.Feature;
@@ -167,7 +165,13 @@ fn getFeaturesSub(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
             features_sub.addFeature(@intFromEnum(Feature.f));
             features_sub.addFeature(@intFromEnum(Feature.d));
             features_sub.addFeature(@intFromEnum(Feature.q));
+            features_sub.addFeature(@intFromEnum(Feature.zfa));
+            features_sub.addFeature(@intFromEnum(Feature.zfhmin));
+
             features_sub.addFeature(@intFromEnum(Feature.v));
+            features_sub.addFeature(@intFromEnum(Feature.zvbb));
+            features_sub.addFeature(@intFromEnum(Feature.zvfhmin));
+            features_sub.addFeature(@intFromEnum(Feature.zvkt));
         },
         else => unreachable,
     }
