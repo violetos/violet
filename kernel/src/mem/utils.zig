@@ -709,6 +709,41 @@ pub fn UnrolledList(comptime Item: type, comptime node_size: ?usize) type {
             return ptr.*;
         }
 
+        pub fn pop(self: *Self) ?Item {
+            if (self.len == 0) return null;
+
+            const last_idx = self.len - 1;
+
+            const item = self.get(last_idx).?;
+
+            self.len -= 1;
+
+            if (self.len == 0) {
+                if (self.first_node) |first| {
+                    first.destroy();
+                }
+                self.first_node = null;
+                self.last_node = null;
+            } else if (self.len % ITEMS_PER_NODE == 0) {
+                const target_node_index = (self.len - 1) / ITEMS_PER_NODE;
+                var current = self.first_node;
+                var current_node_index: usize = 0;
+
+                while (current) |node| : (current_node_index += 1) {
+                    if (current_node_index == target_node_index) {
+                        const old_last = node.next.?;
+                        node.next = null;
+                        self.last_node = node;
+                        old_last.destroy();
+                        break;
+                    }
+                    current = node.next;
+                }
+            }
+
+            return item;
+        }
+
         pub const Iterator = struct {
             current_node: NodePtr,
             current_item_index: usize,
