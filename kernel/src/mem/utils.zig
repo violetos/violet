@@ -607,7 +607,7 @@ pub fn Arc(comptime T: type) type {
     };
 }
 
-/// Should be protected with a RwLock.
+/// Should be atomically protected.
 pub fn UnrolledList(comptime Item: type, comptime node_size: ?usize) type {
     const NODE_SIZE = std.mem.alignForward(usize, @max(node_size orelse PAGE_SIZE, 1), PAGE_SIZE);
     const NODE_PAGECOUNT = NODE_SIZE / PAGE_SIZE;
