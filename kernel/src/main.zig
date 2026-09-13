@@ -22,7 +22,6 @@ const builtin = @import("builtin");
 pub const arch = switch (builtin.cpu.arch) {
     .aarch64 => @import("arch/aarch64/root.zig"),
     .riscv64 => @import("arch/riscv64/root.zig"),
-    .x86_64 => @import("arch/x86_64/root.zig"),
     else => @compileError("Unsupported architecture."),
 };
 

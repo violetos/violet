@@ -146,10 +146,5 @@ const requested_mode: limine.PagingMode = switch (builtin.cpu.arch) {
         5 => .sv57,
         else => @panic("this level is unsupported on riscv64"),
     },
-    .x86_64 => switch (build_options.page_levels) {
-        4 => .@"4lvl",
-        5 => .@"5lvl",
-        else => @panic("this level is unsupported on x86_64"),
-    },
     else => @panic("arch unsupported"),
 };

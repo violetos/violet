@@ -25,7 +25,7 @@ const acpi = drivers.acpi;
 
 // --- drivers/serial/uart_pl011.zig --- //
 
-pub const architectures: []const std.Target.Cpu.Arch = &.{ .aarch64, .x86_64, .riscv64 };
+pub const architectures: []const std.Target.Cpu.Arch = &.{ .aarch64, .riscv64 };
 pub const discover_stage: ?drivers.Stage = .stage2;
 
 var instances: [2]@This() = @splat(undefined);

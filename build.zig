@@ -24,8 +24,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = .freestanding, .abi = .none, .cpu_model = .{ .explicit = if (board) |bo|
         bo.getSoC().getCpuModel()
     else switch (arch) {
-        .x86_64 => &std.Target.x86.cpu.x86_64_v3,
-        .riscv64 => &rva23_cpu_model,
+        .riscv64 => &rva23s_cpu_model,
         else => std.Target.Cpu.Model.baseline(arch, .{ .tag = .freestanding, .version_range = .{ .none = {} } }),
     } } });
 
@@ -38,7 +37,7 @@ pub fn build(b: *std.Build) !void {
         const page_size = b.option(u64, "page_size", "4, 16, 64") orelse
             if (board) |bo| bo.getSoC().getPageSize() else qemu_page_size;
 
-        const qemu_page_levels: u64 = if (arch == .x86_64) 4 else 3;
+        const qemu_page_levels: u64 = 3;
         const page_levels = b.option(u8, "page_levels", "2, 3, 4, 5") orelse
             if (board) |bo| bo.getSoC().getPageLevels() else qemu_page_levels;
 
@@ -46,7 +45,6 @@ pub fn build(b: *std.Build) !void {
             if (board) |bo|
                 try concat(b, bo.getSoC().getDrivers(), bo.getDrivers())
             else switch (arch) {
-                .x86_64 => "uart_ns16550a",
                 .aarch64 => "uart_pl011",
                 .riscv64 => "legacy_sbi",
                 else => "",
@@ -106,7 +104,6 @@ fn createImgRoot(b: *std.Build, arch: Arch) *std.Build.Step.WriteFile {
     const efi_file_name = switch (arch) {
         .aarch64 => "BOOTAA64.EFI",
         .riscv64 => "BOOTRISCV64.EFI",
-        .x86_64 => "BOOTX64.EFI",
         else => unreachable,
     };
 
@@ -181,7 +178,6 @@ fn edk2File(b: *std.Build, arch: Arch) std.Build.LazyPath {
     const remote_name = switch (arch) {
         .aarch64 => "edk2-aarch64-code.fd",
         .riscv64 => "edk2-riscv-code.fd",
-        .x86_64 => "edk2-x86_64-code.fd",
         else => unreachable,
     };
 
@@ -196,7 +192,6 @@ fn edk2VarsFile(b: *std.Build, arch: Arch) std.Build.LazyPath {
     const remote_name = switch (arch) {
         .aarch64 => "edk2-arm-vars.fd",
         .riscv64 => "edk2-riscv-vars.fd",
-        .x86_64 => "edk2-i386-vars.fd",
         else => unreachable,
     };
 
@@ -211,7 +206,6 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
     const qemu_exe = switch (arch) {
         .aarch64 => "qemu-system-aarch64",
         .riscv64 => "qemu-system-riscv64",
-        .x86_64 => "qemu-system-x86_64",
         else => @panic("Architecture not supported yet"),
     };
 
@@ -240,17 +234,13 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
                 "-machine", "virt,aia=aplic-imsic,pflash0=pflash0,pflash1=pflash1",
                 "-cpu",     "rv64,rva23s64=true",
             }),
-            .x86_64 => run_cmd.addArgs(&.{
-                "-machine", "q35,pflash0=pflash0,pflash1=pflash1",
-                "-cpu",     "Haswell-v4,-pcid,-invpcid,-tsc-deadline,-spec-ctrl",
-            }),
             else => unreachable,
         }
 
         run_cmd.addArgs(&.{ "-m", "2G", "-smp", "4" });
         run_cmd.addArgs(&.{ "-serial", "stdio" });
         run_cmd.addArgs(&.{ "-no-reboot", "-no-shutdown" });
-        run_cmd.addArgs(&.{ "-device", if (arch == .x86_64) "virtio-gpu" else "ramfb" });
+        run_cmd.addArgs(&.{ "-device", "ramfb" });
     }
 
     // violet.img
@@ -279,7 +269,7 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
     return run_cmd;
 }
 
-const rva23_cpu_model: std.Target.Cpu.Model = .{
+const rva23s_cpu_model: std.Target.Cpu.Model = .{
     .name = "baseline_rv64",
     .llvm_name = "rva23s64",
     .features = std.Target.riscv.featureSet(&[_]std.Target.riscv.Feature{
@@ -352,7 +342,7 @@ pub const SoC = enum {
             .apple_silicon => &std.Target.aarch64.cpu.apple_m1,
             .bcm2711 => &bcm2711_cpu_model,
             .bcm2712 => &std.Target.aarch64.cpu.cortex_a76,
-            .spacemit_k3 => &rva23_cpu_model,
+            .spacemit_k3 => &rva23s_cpu_model,
             else => unreachable,
         };
     }

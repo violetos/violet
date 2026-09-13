@@ -62,7 +62,6 @@ pub fn build(b: *std.Build) !void {
         .code_model = switch (arch) {
             .aarch64 => .small,
             .riscv64 => .medany,
-            .x86_64 => .kernel,
             else => unreachable,
         },
         .link_libc = false,
@@ -113,7 +112,7 @@ pub fn build(b: *std.Build) !void {
 }
 
 fn getFeaturesAdd(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
-    var features_add = std.Target.Cpu.Feature.Set.empty;
+    const features_add = std.Target.Cpu.Feature.Set.empty;
 
     switch (arch) {
         .aarch64 => {
@@ -121,13 +120,11 @@ fn getFeaturesAdd(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
 
             _ = Feature;
         },
-        .x86_64 => {
-            const Feature = std.Target.x86.Feature;
+        .riscv64 => {
+            const Feature = std.Target.riscv.Feature;
 
-            features_add.addFeature(@intFromEnum(Feature.soft_float));
-            features_add.addFeature(@intFromEnum(Feature.fsgsbase));
+            _ = Feature;
         },
-        .riscv64 => {},
         else => unreachable,
     }
 
@@ -144,20 +141,6 @@ fn getFeaturesSub(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
             features_sub.addFeature(@intFromEnum(Feature.fp_armv8));
             features_sub.addFeature(@intFromEnum(Feature.neon));
             features_sub.addFeature(@intFromEnum(Feature.crypto));
-        },
-        .x86_64 => {
-            const Feature = std.Target.x86.Feature;
-
-            features_sub.addFeature(@intFromEnum(Feature.mmx));
-
-            features_sub.addFeature(@intFromEnum(Feature.sse));
-            features_sub.addFeature(@intFromEnum(Feature.sse2));
-
-            features_sub.addFeature(@intFromEnum(Feature.avx));
-            features_sub.addFeature(@intFromEnum(Feature.avx2));
-
-            features_sub.addFeature(@intFromEnum(Feature.fma));
-            features_sub.addFeature(@intFromEnum(Feature.f16c));
         },
         .riscv64 => {
             const Feature = std.Target.riscv.Feature;

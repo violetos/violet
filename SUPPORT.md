@@ -32,6 +32,8 @@ To run violetOS, the target machine or emulator must meet the following hardware
 * **ISA Profile:** Must strictly comply with the **`x86-64-v3`** microarchitecture level or higher.
 * **Interrupt Routing:** Must operate in an **x2APIC** environment.
 
+*Note* : x86_64 is not supported due to the fact that I (YiraSan) cannot simultaneously maintain aarch64, riscv64, and x86_64. I chose to prioritize modern architectures instead. However, PRs are welcome.
+
 #### aarch64 (ARM64)
 * **ISA Profile:** **ARMv8.0-A** architecture profile or newer.
 * **Interrupt Routing:** Must implement a modern interrupt controller architecture that provides feature parity with (or exceeds) the ARM Generic Interrupt Controller v2 (**GICv2**).
@@ -71,7 +73,6 @@ This matrix provides the status of architecture bring-up and driver implementati
 
 | Platform | Arch | Current Tier |
 | :--- | :---: | :---: |
-| **QEMU `q35`** | `x86_64` | Tier 4 |
 | **QEMU `virt`** | `riscv64` | Tier 4 |
 | **QEMU `virt`** | `aarch64` | Tier 4 |
 

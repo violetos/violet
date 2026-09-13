@@ -32,7 +32,7 @@ See [SUPPORT.md](SUPPORT.md) for a complete list of supported boards. Not specif
 zig build -Darch=<ARCH>
 ```
 
-Supported architectures are `aarch64`, `riscv64` and `x86_64`.
+Supported architectures are `aarch64` and `riscv64`.
 
 ### Running it on QEMU
 

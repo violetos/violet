@@ -28,22 +28,14 @@ const mem = kernel.mem;
 
 // --- drivers/serial/uart_ns16550a.zig --- //
 
-pub const architectures: []const std.Target.Cpu.Arch = &.{ .aarch64, .x86_64, .riscv64 };
+pub const architectures: []const std.Target.Cpu.Arch = &.{ .aarch64, .riscv64 };
 pub const discover_stage: ?drivers.Stage = null;
 
-var instances: [3]@This() = @splat(undefined);
+var instances: [2]@This() = @splat(undefined);
 
 pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
     if (xsdt) |x| try xsdtDiscover(stage, x);
     if (dt) |d| try dtDiscover(stage, d);
-
-    if (builtin.cpu.arch == .x86_64 and stage == .stage0 and !(xsdt_discovered or dt_discovered)) {
-        instances[2] = .{
-            .bus = .{ .pio = 0x3f8 },
-        };
-
-        try init(&instances[2], 1, 1);
-    }
 }
 
 var xsdt_discovered = false;
@@ -68,7 +60,6 @@ inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !v
 
     instances[0] = .{
         .bus = switch (spcr.base_address.address_space_id) {
-            .system_io => .{ .pio = @intCast(spcr.base_address.address) },
             .system_memory => blk: {
                 if (stage != .stage2) return;
 
@@ -143,42 +134,19 @@ fn write(context: *anyopaque, str: []const u8) void {
 }
 
 const Bus = union(enum) {
-    pio: u16,
-    mmio: struct { base: usize, stride: usize },
+    base: usize,
+    stride: usize,
 
     pub fn readReg(self: Bus, offset: usize) u8 {
-        return switch (self) {
-            .pio => |base_port| inb(base_port + @as(u16, @intCast(offset))),
-            .mmio => |m| @as(*volatile u8, @ptrFromInt(m.base + offset * m.stride)).*,
-        };
+        return @as(*volatile u8, @ptrFromInt(self.base + offset * self.stride)).*;
     }
 
     pub fn writeReg(self: Bus, offset: usize, value: u8) void {
-        switch (self) {
-            .pio => |base_port| outb(base_port + @as(u16, @intCast(offset)), value),
-            .mmio => |m| @as(*volatile u8, @ptrFromInt(m.base + offset * m.stride)).* = value,
-        }
+        @as(*volatile u8, @ptrFromInt(self.base + offset * self.stride)).* = value;
     }
 
     pub fn writeChar(self: Bus, byte: u8) void {
         while (self.readReg(5) & 0x20 == 0) kernel.arch.cpu.pause();
         self.writeReg(0, byte);
-    }
-
-    inline fn inb(port: u16) u8 {
-        if (comptime builtin.cpu.arch != .x86_64) unreachable;
-        return asm volatile ("inb %[port], %[result]"
-            : [result] "={al}" (-> u8),
-            : [port] "N{dx}" (port),
-        );
-    }
-
-    inline fn outb(port: u16, value: u8) void {
-        if (comptime builtin.cpu.arch != .x86_64) unreachable;
-        asm volatile ("outb %[value], %[port]"
-            :
-            : [value] "{al}" (value),
-              [port] "N{dx}" (port),
-        );
     }
 };
