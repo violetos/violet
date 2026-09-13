@@ -789,3 +789,172 @@ pub fn UnrolledList(comptime Item: type, comptime node_size: ?usize) type {
         }
     };
 }
+
+pub const HeapMode = enum {
+    min,
+    max,
+};
+
+pub const PopMode = enum {
+    first,
+    last,
+};
+
+/// Should be atomically protected.
+pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode) type {
+    return struct {
+        pub const Item = struct {
+            value: T,
+            priority: u64,
+        };
+
+        list: UnrolledList(Item, null),
+
+        const Self = @This();
+
+        pub const empty: Self = .{ .list = .{} };
+
+        pub fn push(self: *Self, item: Item) !void {
+            const index = try self.list.append(item);
+            self.siftUp(index);
+        }
+
+        pub fn pop(self: *Self, comptime pop_mode: PopMode) ?Item {
+            if (self.list.len == 0) return null;
+
+            if (self.list.len == 1) {
+                return self.list.pop();
+            }
+
+            const target_idx = switch (pop_mode) {
+                .first => @as(usize, 0),
+                .last => self.findWorstIndex(),
+            };
+
+            const target_val = self.list.get(target_idx).?;
+            const last_idx = self.list.len - 1;
+
+            if (target_idx != last_idx) {
+                const target_ptr = self.list.getPtr(target_idx).?;
+                const last_ptr = self.list.getPtr(last_idx).?;
+                const temp = target_ptr.*;
+                target_ptr.* = last_ptr.*;
+                last_ptr.* = temp;
+            }
+
+            _ = self.list.pop();
+
+            if (target_idx != last_idx and self.list.len > 0) {
+                if (pop_mode == .first) {
+                    self.siftDown(target_idx);
+                } else {
+                    self.siftUp(target_idx);
+                }
+            }
+
+            return target_val;
+        }
+
+        pub fn peek(self: *Self, comptime pop_mode: PopMode) ?Item {
+            if (self.list.len == 0) return null;
+            const target_idx = switch (pop_mode) {
+                .first => @as(usize, 0),
+                .last => self.findWorstIndex(),
+            };
+            return self.list.get(target_idx);
+        }
+
+        inline fn isBetter(a: Item, b: Item) bool {
+            return switch (mode) {
+                .min => a.priority < b.priority,
+                .max => a.priority > b.priority,
+            };
+        }
+
+        inline fn isWorse(a: Item, b: Item) bool {
+            return switch (mode) {
+                .min => a.priority > b.priority,
+                .max => a.priority < b.priority,
+            };
+        }
+
+        fn findWorstIndex(self: *Self) usize {
+            var it = self.list.iterator();
+            var worst_idx: usize = 0;
+            var worst_val: ?Item = null;
+            var current_idx: usize = 0;
+
+            const start_idx = self.list.len / 2;
+
+            while (it.next()) |ptr| {
+                if (current_idx >= start_idx) {
+                    if (worst_val == null or isWorse(ptr.*, worst_val.?)) {
+                        worst_val = ptr.*;
+                        worst_idx = current_idx;
+                    }
+                }
+                current_idx += 1;
+            }
+            return worst_idx;
+        }
+
+        fn siftUp(self: *Self, start_index: usize) void {
+            var index = start_index;
+            while (index > 0) {
+                const parent_index = (index - 1) / 2;
+                const child_ptr = self.list.getPtr(index).?;
+                const parent_ptr = self.list.getPtr(parent_index).?;
+
+                if (isBetter(child_ptr.*, parent_ptr.*)) {
+                    const temp = child_ptr.*;
+                    child_ptr.* = parent_ptr.*;
+                    parent_ptr.* = temp;
+                    index = parent_index;
+                } else {
+                    break;
+                }
+            }
+        }
+
+        fn siftDown(self: *Self, start_index: usize) void {
+            var index = start_index;
+            const count = self.list.len;
+
+            while (true) {
+                const left = index * 2 + 1;
+                const right = index * 2 + 2;
+                var best_index = index;
+                var best_val = self.list.get(best_index).?;
+
+                if (left < count) {
+                    const left_val = self.list.get(left).?;
+                    if (isBetter(left_val, best_val)) {
+                        best_index = left;
+                        best_val = left_val;
+                    }
+                }
+
+                if (right < count) {
+                    const right_val = self.list.get(right).?;
+                    if (isBetter(right_val, best_val)) {
+                        best_index = right;
+                        best_val = right_val;
+                    }
+                }
+
+                if (best_index != index) {
+                    const index_ptr = self.list.getPtr(index).?;
+                    const best_ptr = self.list.getPtr(best_index).?;
+
+                    const temp = index_ptr.*;
+                    index_ptr.* = best_ptr.*;
+                    best_ptr.* = temp;
+
+                    index = best_index;
+                } else {
+                    break;
+                }
+            }
+        }
+    };
+}
