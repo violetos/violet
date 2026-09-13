@@ -83,9 +83,7 @@ pub const CpuContext = struct {
 
 // --- //
 
-export var mp_request: limine.MpRequest linksection(".limine_requests") = .{
-    .flags = .{ .x86_64_x2apic = true },
-};
+export var mp_request: limine.MpRequest linksection(".limine_requests") = .{};
 
 pub fn init() !void {
     const mp_response: *limine.MpResponse = mp_request.response orelse return error.MpNotFound;
@@ -105,9 +103,6 @@ pub fn init() !void {
             .riscv64 => if (mp_response.bsp_hartid == cpu_context.hardware_id) {
                 this_cpu = cpu_context;
             },
-            .x86_64 => if (mp_response.bsp_lapic_id == cpu_context.hardware_id) {
-                this_cpu = cpu_context;
-            },
             else => unreachable,
         }
     }
@@ -121,7 +116,6 @@ inline fn hardwareId(mp_info: *limine.MpInfo) u64 {
     return switch (builtin.cpu.arch) {
         .aarch64 => mp_info.mpidr,
         .riscv64 => mp_info.hartid,
-        .x86_64 => mp_info.lapic_id,
         else => unreachable,
     };
 }
