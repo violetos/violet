@@ -1,3 +1,6 @@
 [submodule "basalt"]
 	path = basalt
 	url = https://github.com/violetos/basalt
+[submodule "genesis"]
+	path = genesis
+	url = https://github.com/violetos/genesis
