@@ -48,6 +48,7 @@ pub const TrapAnchor = extern struct {
     kernel_stack_top: u64,
     scratch_t1: u64,
     scratch_t2: u64,
+    in_handler: u64,
 };
 
 comptime {
@@ -55,6 +56,7 @@ comptime {
     std.debug.assert(@offsetOf(TrapAnchor, "kernel_stack_top") == 8);
     std.debug.assert(@offsetOf(TrapAnchor, "scratch_t1") == 16);
     std.debug.assert(@offsetOf(TrapAnchor, "scratch_t2") == 24);
+    std.debug.assert(@offsetOf(TrapAnchor, "in_handler") == 32);
 }
 
 const ResumeMode = union(enum) {
@@ -152,8 +154,14 @@ fn syncHandler(code: u64, frame: *ReducedFrame) void {
         },
         3 => { // EBREAK
             const rframe = currentReducedFrame(frame);
-            log.debug("breakpoint at 0x{x}", .{rframe.program_counter});
-            rframe.program_counter += 4;
+
+            const pc = rframe.program_counter;
+            const instruction = @as(*const u16, @ptrFromInt(pc)).*;
+            const is_32_bit = (instruction & 0b11) == 0b11;
+            const instruction_length: u64 = if (is_32_bit) 4 else 2;
+
+            log.debug("breakpoint at 0x{x}", .{pc});
+            rframe.program_counter += instruction_length;
         },
         else => {
             log.err("unexpected synchronous trap (cause={})", .{code});
@@ -234,6 +242,7 @@ pub const InterruptsContext = struct {
             .kernel_stack_top = kernel_stack_top,
             .scratch_t1 = 0,
             .scratch_t2 = 0,
+            .in_handler = 0,
         };
     }
 

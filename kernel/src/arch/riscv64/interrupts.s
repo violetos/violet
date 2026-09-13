@@ -28,8 +28,7 @@
 .equ ANCHOR_KSP,         8
 .equ ANCHOR_SCRATCH_T1,  16
 .equ ANCHOR_SCRATCH_T2,  24
-
-.equ SSTATUS_SPP, (1 << 8)
+.equ ANCHOR_IN_HANDLER,  32
 
 .section .text
 
@@ -101,6 +100,10 @@
 .global call_system
 .type call_system, %function
 call_system:
+    csrr t0, sscratch
+    li   t1, 1
+    sd   t1, ANCHOR_IN_HANDLER(t0)
+
     csrci sstatus, 2
 
     addi sp, sp, -GEN_SIZE
@@ -255,23 +258,31 @@ restore_extended_via_ret:
 .global restore_reduced_via_sret
 .type restore_reduced_via_sret, %function
 restore_reduced_via_sret:
+    csrr t0, sscratch
+    sd   zero, ANCHOR_IN_HANDLER(t0)
+
     ld t0, OFF_GEN_PC(a0)
     csrw sepc, t0
 
-    LOAD_REDUCED_EXCEPT_SP_A0
     ld t1, OFF_GEN_SP(a0)
-    ld a0, (8*8)(a0)
     mv sp, t1
+
+    LOAD_REDUCED_EXCEPT_SP_A0
+    ld a0, (8*8)(a0)
 
     sret
 
 .global restore_reduced_via_ret
 .type restore_reduced_via_ret, %function
 restore_reduced_via_ret:
-    LOAD_REDUCED_EXCEPT_SP_A0
+    csrr t0, sscratch
+    sd   zero, ANCHOR_IN_HANDLER(t0)
+
     ld t1, OFF_GEN_SP(a0)
-    ld a0, (8*8)(a0)
     mv sp, t1
+
+    LOAD_REDUCED_EXCEPT_SP_A0
+    ld a0, (8*8)(a0)
 
     csrsi sstatus, 2
     ret
@@ -284,9 +295,11 @@ trap_vector:
     sd    t1, ANCHOR_SCRATCH_T1(t0)
     sd    t2, ANCHOR_SCRATCH_T2(t0)
 
-    csrr  t1, sstatus
-    andi  t1, t1, SSTATUS_SPP
+    ld    t1, ANCHOR_IN_HANDLER(t0)
     bnez  t1, 2f
+
+    li    t1, 1
+    sd    t1, ANCHOR_IN_HANDLER(t0)
 
     mv    t2, sp
     addi  sp, t2, -GEN_SIZE
