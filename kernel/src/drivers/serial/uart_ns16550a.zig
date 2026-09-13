@@ -69,10 +69,13 @@ inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !v
                 else
                     @as(usize, spcr.base_address.register_bit_width) / 8;
 
-                break :blk .{ .mmio = .{ .base = try kernel.mem.virt.mmio(
-                    spcr.base_address.address,
-                    kernel.mem.paging.page_size,
-                ), .stride = if (stride == 0) 1 else stride } };
+                break :blk .{
+                    .base = try kernel.mem.virt.mmio(
+                        spcr.base_address.address,
+                        kernel.mem.paging.page_size,
+                    ),
+                    .stride = if (stride == 0) 1 else stride,
+                };
             },
             else => return,
         },
@@ -133,7 +136,7 @@ fn write(context: *anyopaque, str: []const u8) void {
     }
 }
 
-const Bus = union(enum) {
+const Bus = struct {
     base: usize,
     stride: usize,
 
