@@ -1,0 +1,3 @@
+[submodule "basalt"]
+	path = basalt
+	url = https://github.com/violetos/basalt
