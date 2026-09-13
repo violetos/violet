@@ -19,6 +19,7 @@ jobs:
         with:
           fetch-depth: 0
           clean: true
+          submodules: recursive
 
       - name: Setup Zig
         uses: mlugg/setup-zig@v2
