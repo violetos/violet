@@ -24,7 +24,8 @@ pub fn build(b: *std.Build) !void {
     const target = b.resolveTargetQuery(.{ .cpu_arch = arch, .os_tag = .freestanding, .abi = .none, .cpu_model = .{ .explicit = if (board) |bo|
         bo.getSoC().getCpuModel()
     else switch (arch) {
-        .x86_64 => &std.Target.x86.cpu.x86_64_v2,
+        .x86_64 => &std.Target.x86.cpu.x86_64_v3,
+        .riscv64 => &rva23_cpu_model,
         else => std.Target.Cpu.Model.baseline(arch, .{ .tag = .freestanding, .version_range = .{ .none = {} } }),
     } } });
 
@@ -37,7 +38,7 @@ pub fn build(b: *std.Build) !void {
         const page_size = b.option(u64, "page_size", "4, 16, 64") orelse
             if (board) |bo| bo.getSoC().getPageSize() else qemu_page_size;
 
-        const qemu_page_levels: u64 = if (arch == .aarch64) 3 else 4;
+        const qemu_page_levels: u64 = if (arch == .x86_64) 4 else 3;
         const page_levels = b.option(u8, "page_levels", "2, 3, 4, 5") orelse
             if (board) |bo| bo.getSoC().getPageLevels() else qemu_page_levels;
 
@@ -236,12 +237,12 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
                 "-cpu",     "max",
             }),
             .riscv64 => run_cmd.addArgs(&.{
-                "-machine", "virt,pflash0=pflash0,pflash1=pflash1",
-                "-cpu",     "rv64",
+                "-machine", "virt,aia=aplic-imsic,pflash0=pflash0,pflash1=pflash1",
+                "-cpu",     "rv64,rva23s64=true",
             }),
             .x86_64 => run_cmd.addArgs(&.{
                 "-machine", "q35,pflash0=pflash0,pflash1=pflash1",
-                "-cpu",     "max",
+                "-cpu",     "Haswell-v4,-pcid,-invpcid,-tsc-deadline,-spec-ctrl",
             }),
             else => unreachable,
         }
@@ -278,31 +279,58 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
     return run_cmd;
 }
 
+const rva23_cpu_model: std.Target.Cpu.Model = .{
+    .name = "baseline_rv64",
+    .llvm_name = "rva23s64",
+    .features = std.Target.riscv.featureSet(&[_]std.Target.riscv.Feature{
+        .rva23s64,
+    }),
+};
+
 pub const SoC = enum {
     // aarch64
+    apple_silicon,
     bcm2711,
+    bcm2712,
     rk3588,
 
     // riscv64
-    jh7110,
+    spacemit_k3,
 
     pub fn getArch(self: SoC) Arch {
         return switch (self) {
-            .bcm2711, .rk3588 => .aarch64,
-            .jh7110 => .riscv64,
+            .apple_silicon,
+            .bcm2711,
+            .bcm2712,
+            .rk3588,
+            => .aarch64,
+
+            .spacemit_k3,
+            => .riscv64,
         };
     }
 
     pub fn getPageSize(self: SoC) u64 {
         return switch (self) {
-            .rk3588 => 16,
-            .jh7110, .bcm2711 => 4,
+            .apple_silicon,
+            .bcm2712,
+            .rk3588,
+            => 16,
+
+            .bcm2711,
+            .spacemit_k3,
+            => 4,
         };
     }
 
     pub fn getPageLevels(self: SoC) u8 {
         return switch (self) {
-            .rk3588, .jh7110, .bcm2711 => 3,
+            .apple_silicon,
+            .bcm2711,
+            .bcm2712,
+            .rk3588,
+            .spacemit_k3,
+            => 3,
         };
     }
 
@@ -321,8 +349,10 @@ pub const SoC = enum {
 
     pub fn getCpuModel(self: SoC) *const std.Target.Cpu.Model {
         return switch (self) {
+            .apple_silicon => &std.Target.aarch64.cpu.apple_m1,
             .bcm2711 => &bcm2711_cpu_model,
-            .jh7110 => &std.Target.riscv.cpu.sifive_u74,
+            .bcm2712 => &std.Target.aarch64.cpu.cortex_a76,
+            .spacemit_k3 => &rva23_cpu_model,
             else => unreachable,
         };
     }
@@ -345,18 +375,17 @@ pub const SoC = enum {
 
 pub const Board = enum {
     // aarch64
+    apple,
     raspberry_pi4,
+    raspberry_pi5,
     radxa_rock5b,
-    orange_pi5_plus,
-
-    // riscv64
-    vision_five2,
 
     pub fn getSoC(self: Board) SoC {
         return switch (self) {
+            .apple => .apple_silicon,
             .raspberry_pi4 => .bcm2711,
-            .radxa_rock5b, .orange_pi5_plus => .rk3588,
-            .vision_five2 => .jh7110,
+            .raspberry_pi5 => .bcm2712,
+            .radxa_rock5b => .rk3588,
         };
     }
 
@@ -374,7 +403,7 @@ pub const Board = enum {
 };
 
 pub const Module = enum {
-    virtio,
+    // ...
 };
 
 fn concat(b: *std.Build, str1: []const u8, str2: []const u8) ![]const u8 {

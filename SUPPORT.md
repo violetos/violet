@@ -1,80 +1,91 @@
 # violetOS Platform Support
 
-This document serves as the official hardware specification and status tracker for violetOS.
+This document defines the official hardware support lifecycle, architectural baselines, and compatibility matrix for violetOS. 
 
-## 1. Hardware Requirements
+If a platform does not meet the baseline requirements outlined in this document, attempts to introduce support for it will be systematically rejected.
 
-violetOS is designed for modern architectures. To run the operating system, your target machine or emulator must meet the following baseline specifications:
+## 1. The "No Museum" Policy
 
-### 1.1. Physical Memory (RAM)
+violetOS explicitly excludes support for legacy standards. The following are permanently unsupported:
 
-* **Minimum Capacity:** 384 MiB of available physical memory.
-* **Evaluation Condition:** This capacity threshold is evaluated *strictly after* kernel stage3 initialization.
+* **32-bit Architectures:** No support for x86 (IA-32), ARMv7, or RV32.
+* **Legacy Firmware:** No BIOS or CSM (Compatibility Support Module) support. A compliant 64-bit UEFI environment is mandatory for bootstrapping.
+* **Obsolete Interrupt Routing:** 
+  * No Intel 8259 PIC.
+  * No RISC-V PLIC or CLINT/ACLINT.
+  * No legacy proprietary SoC interrupt controllers (e.g., legacy Broadcom controllers found on Raspberry Pi 3 or older).
+* **Uncooperative Hardware:** Silicon that fundamentally requires undocumented closed-source blobs operating at Ring 0 / EL1 / S-mode to function is unsupported. 
 
-### 1.2. Memory Management Unit (MMU)
+## 2. Architectural Baselines
 
-* **Translation Hierarchy:** At least 3-level hardware paging is mandatory (e.g., Sv39 for RISC-V, 4-level/5-level for x86_64, or multi-level AArch64 translation regimes).
-* **Granularity:** A baseline 4 KiB page granule is required. The kernel can be compiled to support 16 KiB or 64 KiB translation granules on compliant architectures.
+To run violetOS, the target machine or emulator must meet the following hardware capabilities.
 
-### 1.3. Architecture-Specific Requirements
+### 2.1. Memory and Translation (MMU)
 
-To guarantee symmetric multiprocessing (SMP) and reliable preemption, strict ISA profiles and standard interrupt controllers are enforced. Custom, vendor-specific, or legacy controllers are explicitly unsupported.
+* **Physical Memory:** A minimum of 384 MiB of available physical RAM. This threshold is evaluated strictly *after* the kernel's stage3 initialization and firmware memory map reclamation.
+* **Translation Granule:** Hardware must support a baseline 4 KiB page granule for the initial UEFI handover and early boot. However, the kernel is designed to immediately pivot to optimal translation granules.
+
+### 2.2. CPU Profiles & Interrupts
 
 #### x86_64
 
-* **ISA Profile:** Must comply with the **`x86-64-v2`** microarchitecture level or higher (guaranteeing `CMPXCHG16B`, `POPCNT`, and `SSE4.2`).
-* **Interrupt Routing:** Must operate in an **APIC / x2APIC** environment. The legacy 8259 PIC is unsupported.
+* **ISA Profile:** Must strictly comply with the **`x86-64-v3`** microarchitecture level or higher.
+* **Interrupt Routing:** Must operate in an **x2APIC** environment.
 
 #### aarch64 (ARM64)
-
-* **ISA Profile:** **ARMv8-A** architecture profile or newer.
-* **Interrupt Routing:** Must implement the ARM Generic Interrupt Controller architecture (**GICv2, GICv3, or newer**). 
-  > *Note: Then SoC-specific proprietary interrupt controllers (such as the legacy Broadcom controllers found on early Raspberry Pi boards like the RPi 3) are unsupported.*
+* **ISA Profile:** **ARMv8.0-A** architecture profile or newer.
+* **Interrupt Routing:** Must implement a modern interrupt controller architecture that provides feature parity with (or exceeds) the ARM Generic Interrupt Controller v2 (**GICv2**).
 
 #### riscv64
+* **ISA Profile:** Must strictly comply with the **`RVA23S64`** profile. 
 
-* **ISA Profile:** The base integer instruction set (`RV64I`) must be supplemented with Multiplication (`M`), Atomics (`A`), and Compressed instructions (`C`).
-* **Interrupt Routing:** Must expose a standard **PLIC** (Platform-Level Interrupt Controller) or the newer **AIA** (Advanced Interrupt Architecture), alongside a **CLINT/ACLINT** for inter-processor interrupts (IPI) and timer events.
+### 2.3. System Primitives
 
-### 1.4. System Execution & Primitives
+Regardless of the architecture, the hardware must provide:
+* **Execution Privilege:** Hardware support for standard privileged system calls (`syscall`, `svc`, `ecall`).
+* **Timing Facilities:** A reliable hardware timer capable of generating precise interrupts for the kernel scheduler without relying on firmware intervention.
 
-Regardless of the target architecture, the underlying platform must expose:
-* **Execution Privilege:** Hardware support for privileged system call instructions (`syscall`, `svc`, `ecall`).
-* **Timing Facilities:** A reliable hardware timer mechanism capable of generating precise interrupts for the kernel scheduler.
+## 3. Platform Support Tiers
 
-## 2. Platform Support Tiers
+violetOS categorizes hardware support into four distinct, capability-based tiers.
 
-**violetOS** categorizes hardware platform support into four progressive tiers.
+* **Tier 4 (Bootstrap):** The platform is successfully integrated into the build system. The kernel can boot, initialize the physical and virtual memory manager, and provide a functional serial console.
 
-* **Tier 4** (Minimal): The platform is successfully integrated into the build system. The kernel boots and provides a functional serial console for low-level debugging.
+* **Tier 3 (Headless):** The core system is fully operational. Symmetric Multiprocessing (SMP), and hardware interrupts/timers are functional. Primary hardware buses (e.g., PCIe, ECAM) are enumerated. Essential non-interactive I/O is supported, such as NVMe storage and basic network connectivity.
 
-* **Tier 3** (Headless): The core kernel is fully operational. This tier guarantees memory stability (PMM/VMM) and functional Symmetric Multiprocessing (SMP). Essential non-interactive I/O is supported, including fundamental storage drivers (NVMe, SD/eMMC) and basic network connectivity.
+* **Tier 2 (Workstation):** The platform supports local, interactive usage. The USB subsystem is operational. The OS can output a graphical interface via a generic Framebuffer (e.g., GOP/EFI FB).
 
-* **Tier 2** (Workstation): The platform supports local, interactive usage. The primary hardware buses (PCIe, USB) are successfully enumerated. The I/O ecosystem includes support for Human Interface Devices (HID) and raw display output via a generic Framebuffer.
+* **Tier 1 (Native):** The platform delivers a fully optimized experience. This tier strictly mandates functional hardware-accelerated graphics (GPU) and advanced power management (CPU frequency scaling, sleep/wake states). 
 
-* **Tier 1** (Full): The platform delivers a fluid, native, and highly optimized user experience. Achieving this tier strictly mandates functional hardware-accelerated graphics (GPU) alongside support for all essential peripherals (e.g., power management, audio, advanced networking). Crucially, hardware components are explicitly exempted from this support requirement if they lack public documentation, lack an open-source reference implementation, or fundamentally require the kernel to load a closed-source runtime blob (e.g., proprietary NPUs or Secure Elements). Consequently, platforms requiring undocumented runtime blobs to initialize their GPU are inherently capped at Tier 2.
+## 4. Hardware Support Matrix
 
-## 3. Status Tracker
+This matrix provides the status of architecture bring-up and driver implementation for specific targets.
 
 > [!NOTE]
-> ✅ Reached <br>
-> 🔨 Work in Progress (WIP) <br>
-> 🗓️ Planned <br>
+> ✅ Implemented and stable. <br>
+> 🔨 Work in progress, unstable, or incomplete. <br>
+> ❌ Not yet implemented or currently blocked. <br>
+> 🗓️ On the roadmap but no code committed yet. <br>
 
-| Platform | Target Tier | Current State | 
+### 4.1. Virtual environments
+
+| Platform | Arch | Current Tier |
 | :--- | :---: | :---: |
-| **QEMU (aarch64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
-| **QEMU (riscv64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
-| **QEMU (x86_64)** | Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
-| **Raspberry Pi 4**<sup>1</sup>| Tier 1 | Tier 4 ✅ - Tier 3 🔨 |
-| **Radxa Rock 5B** | Tier 2 | 🗓️ |
-| **Orange Pi5 Plus** | Tier 2 | 🗓️ |
-| **VisionFive 2**<sup>2</sup> | Tier 2 | 🗓️ |
+| **QEMU `q35`** | `x86_64` | Tier 4 |
+| **QEMU `virt`** | `riscv64` | Tier 4 |
+| **QEMU `virt`** | `aarch64` | Tier 4 |
 
-<sup>1</sup> Includes Raspberry Pi 4B, 400 and Compute Module 4.
-<sup>2</sup> StarFive VisionFive 2 board (JH7110 SoC).
+### 4.2. Physical Hardware
+Support matrix for bare-metal silicon and single-board computers (SBCs).
+
+| Board / SoC | Arch | Target Tier | Boot & Serial | SMP | PCIe | USB | Display | GPU |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Apple Silicon** | `aarch64` | Tier 1 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Raspberry Pi 4** | `aarch64` | Tier 1 | ✅ | 🔨 | ❌ | ❌ | ❌ | ❌ |
+| **Raspberry Pi 5** | `aarch64` | Tier 2 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Radxa Rock 5B** | `aarch64` | Tier 2 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |
 
 ***
 
 > [!IMPORTANT]
-> The final decision to include, maintain, or drop a platform remains at the sole discretion of the project maintainers.
+> The inclusion, maintenance, or deprecation of any physical platform is at the sole discretion of the project maintainers.

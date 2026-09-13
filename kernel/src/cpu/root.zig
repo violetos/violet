@@ -84,7 +84,7 @@ pub const CpuContext = struct {
 // --- //
 
 export var mp_request: limine.MpRequest linksection(".limine_requests") = .{
-    .flags = .{ .x86_64_x2apic = false }, // unimplemented
+    .flags = .{ .x86_64_x2apic = true },
 };
 
 pub fn init() !void {
