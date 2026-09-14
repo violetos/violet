@@ -31,7 +31,7 @@ pub fn build(b: *std.Build) !void {
     const optimize = b.standardOptimizeOption(.{});
     if (optimize == .ReleaseFast) @panic("ReleaseFast is forbidden");
 
-    const img_root = createImgRoot(b, arch);
+    var root = createImgRoot(b, arch);
     {
         const qemu_page_size: u64 = if (arch == .aarch64) 16 else 4;
         const page_size = b.option(u64, "page_size", "4, 16, 64") orelse
@@ -61,31 +61,77 @@ pub fn build(b: *std.Build) !void {
 
         if (optimize == .Debug) b.installArtifact(kernel_exe);
 
-        _ = img_root.addCopyFile(kernel_exe.getEmittedBin(), "core/kernel.elf");
+        _ = root.addCopyFile(kernel_exe.getEmittedBin(), "core/kernel.elf");
     }
 
-    setupFirmware(b, img_root, board);
+    setupFirmware(b, root, board);
 
-    const make_img = b.addRunArtifact(makeImageExe(b));
-    make_img.step.dependOn(&img_root.step);
+    if (board) |bo| {
+        switch (bo) {
+            .apple => {
+                const old_root = root;
+                root = b.addWriteFiles();
+                _ = root.addCopyDirectory(old_root.getDirectory(), "esp", .{});
+            },
+            else => {},
+        }
+    }
 
-    make_img.addDirectoryArg(img_root.getDirectory());
+    const format = if (board) |br| br.format() else Format.img;
+    var final: std.Build.LazyPath = undefined;
 
-    const violet_img = b.addInstallFile(
-        make_img.addOutputFileArg("violet.img"),
-        if (board) |bo|
-            b.fmt("violet-{s}.img", .{@tagName(bo)})
-        else
-            b.fmt("violet-{s}.img", .{@tagName(arch)}),
-    );
-    b.getInstallStep().dependOn(&violet_img.step);
+    switch (format) {
+        .img => {
+            const make_img = b.addRunArtifact(makeImageExe(b));
+            make_img.step.dependOn(&root.step);
 
-    make_img.addArgs(&.{ "--label", "VIOLET", "--volume-label", "VIOLET" });
+            make_img.addDirectoryArg(root.getDirectory());
 
-    const run_cmd = runCmd(b, arch, violet_img.source);
+            const violet_img = b.addInstallFile(
+                make_img.addOutputFileArg("violet.img"),
+                if (board) |bo|
+                    b.fmt("violet-{s}.img", .{@tagName(bo)})
+                else
+                    b.fmt("violet-{s}.img", .{@tagName(arch)}),
+            );
+            b.getInstallStep().dependOn(&violet_img.step);
 
-    const run_step = b.step("run", "Boot violetOS in QEMU");
+            final = violet_img.source;
+
+            make_img.addArgs(&.{ "--label", "VIOLET", "--volume-label", "VIOLET" });
+        },
+        .zip => {
+            switch (b.graph.host.result.os.tag) {
+                .windows => {
+                    const zip_cmd = b.addSystemCommand(&.{ "Compress-Archive", "-Path" });
+                    zip_cmd.setCwd(root.getDirectory());
+                    zip_cmd.addDirectoryArg(root.getDirectory());
+                    zip_cmd.addArg("-DestinationPath");
+                    final = zip_cmd.addOutputFileArg("violet.zip");
+                },
+                else => {
+                    const zip_cmd = b.addSystemCommand(&.{ "zip", "-r" });
+                    zip_cmd.setCwd(root.getDirectory());
+                    final = zip_cmd.addOutputFileArg("violet.zip");
+                    zip_cmd.addDirectoryArg(root.getDirectory());
+                },
+            }
+
+            const violet_zip = b.addInstallFile(
+                final,
+                if (board) |bo|
+                    b.fmt("violet-{s}.zip", .{@tagName(bo)})
+                else
+                    b.fmt("violet-{s}.zip", .{@tagName(arch)}),
+            );
+            b.getInstallStep().dependOn(&violet_zip.step);
+        },
+    }
+
     if (board == null) {
+        const run_cmd = runCmd(b, arch, final);
+        const run_step = b.step("run", "Boot violetOS in QEMU");
+
         run_step.dependOn(&run_cmd.step);
         run_step.dependOn(b.getInstallStep());
     }
@@ -114,6 +160,10 @@ fn createImgRoot(b: *std.Build, arch: Arch) *std.Build.Step.WriteFile {
 
 fn setupFirmware(b: *std.Build, img_root: *std.Build.Step.WriteFile, board: ?Board) void {
     if (board) |bo| switch (bo) {
+        .apple => {
+            const alx_fw = b.dependency("alx_fw", .{});
+            _ = img_root.addCopyFile(alx_fw.path("m1n1/boot.bin"), "m1n1/boot.bin");
+        },
         .raspberry_pi4 => {
             const rpi4_uefi = b.dependency("rpi4_uefi", .{});
             _ = img_root.addCopyDirectory(rpi4_uefi.path("."), ".", .{ .exclude_extensions = &.{"md"} });
@@ -363,12 +413,24 @@ pub const SoC = enum {
     };
 };
 
+pub const Format = enum {
+    img,
+    zip,
+};
+
 pub const Board = enum {
     // aarch64
     apple,
     raspberry_pi4,
     raspberry_pi5,
     radxa_rock5b,
+
+    pub fn format(self: Board) Format {
+        return switch (self) {
+            .apple => .zip,
+            else => .img,
+        };
+    }
 
     pub fn getSoC(self: Board) SoC {
         return switch (self) {

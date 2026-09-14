@@ -18,6 +18,10 @@
             .url = "git+https://github.com/abbrev/fatfs#ab992fcf2926b8a1ee3f0a8f9cefb6584174100d",
             .hash = "N-V-__8AANDpQwATzvr-YnwgeXZCO7LB8Qm9efjVTG_Zlv7H",
         },
+        .alx_fw = .{
+            .url = "https://cdn.asahilinux.org/os/uefi-only-20260905-asahi-7.1.12-1.zip",
+            .hash = "N-V-__8AAI0eSgB_tRVOkzPSfI0-a-6IUbXx4vh9dEwC1jqe",
+        },
     },
     .paths = .{
         "build.zig",

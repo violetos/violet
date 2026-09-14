@@ -1,0 +1,35 @@
+{
+    "os_list": [
+        {
+            "name": "violetOS (nightly)",
+            "default_os_name": "violetOS",
+            "expert": true,
+            "boot_object": "m1n1.bin",
+            "next_object": "m1n1/boot.bin",
+            "package": "https://github.com/violetos/violet/releases/download/nightly/violet-apple.zip",
+            "supported_fw": [
+                "13.5",
+                "14.8.3"
+            ],
+            "partitions": [
+                {
+                    "name": "EFI",
+                    "type": "EFI",
+                    "size": "500MB",
+                    "format": "fat",
+                    "copy_firmware": false,
+                    "copy_installer_data": true,
+                    "source": "esp"
+                }
+            ]
+        },
+        {
+            "name": "Tethered boot (m1n1, for development)",
+            "default_os_name": "m1n1 proxy",
+            "expert": true,
+            "boot_object": "m1n1.bin",
+            "external_boot": true,
+            "partitions": []
+        }
+    ]
+}

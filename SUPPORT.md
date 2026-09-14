@@ -81,7 +81,7 @@ Support matrix for bare-metal silicon and single-board computers (SBCs).
 
 | Board / SoC | Arch | Target Tier | Boot & Serial | SMP | PCIe | USB | Display | GPU |
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
-| **Apple Silicon** | `aarch64` | Tier 1 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Apple Silicon** | `aarch64` | Tier 1 | 🔨 | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Raspberry Pi 4** | `aarch64` | Tier 1 | ✅ | 🔨 | ❌ | ❌ | ❌ | ❌ |
 | **Raspberry Pi 5** | `aarch64` | Tier 2 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Radxa Rock 5B** | `aarch64` | Tier 2 | 🗓️ | ❌ | ❌ | ❌ | ❌ | ❌ |

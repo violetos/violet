@@ -38,6 +38,9 @@ jobs:
       - name: Raspberry Pi4 Build
         run: zig build -Dboard=raspberry_pi4 -Doptimize=ReleaseSafe
 
+      - name: Apple Build
+        run: zig build -Dboard=apple -Doptimize=ReleaseSafe
+
       - name: Build Changelog
         id: changelog
         uses: mikepenz/release-changelog-builder-action@v6
@@ -67,7 +70,9 @@ jobs:
           body: ${{ steps.changelog.outputs.changelog }}
           prerelease: true
           files: |
+            build/apple-alx.json
             zig-out/*.img
+            zig-out/*.zip
             LICENSE
             NOTICE.md
             README.md
