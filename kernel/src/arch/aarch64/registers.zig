@@ -22,6 +22,23 @@ const kernel = @import("root");
 
 // --- arch/aarch64/registers.zig --- //
 
+pub const ExceptionLevel = enum(u4) {
+    el0 = 0b0000,
+    el1t = 0b0100,
+    el1h = 0b0101,
+    el2t = 0b1000,
+    el2h = 0b1001,
+    _,
+};
+
+pub inline fn currentEL() ExceptionLevel {
+    const el = asm volatile ("mrs %[res], currentel" : [res] "=r" (-> u64));
+    const sp = asm volatile ("mrs %[res], spsel" : [res] "=r" (-> u64));
+    const combined = el | sp;
+
+    return @enumFromInt(@as(u4, @truncate(combined)));
+}
+
 pub inline fn loadTpidrEl0() u64 {
     return asm volatile ("mrs %[output], tpidr_el0"
         : [output] "=r" (-> u64),
@@ -562,12 +579,7 @@ pub const ESR = packed struct(u64) {
 /// Saved Program Status Register
 pub const SPSR = packed struct(u64) {
     /// AArch64 Exception level and selected Stack Pointer.
-    mode: enum(u4) { // bit 0-3
-        el0 = 0b0000,
-        el1t = 0b0100,
-        el1h = 0b0101,
-        // TODO. there's two others
-    },
+    mode: ExceptionLevel, // bit 0-3
     es: u1 = 0, // bit 4,
     _reserved0: u1 = 0, // bit 5
     f: bool = false, // bit 6
