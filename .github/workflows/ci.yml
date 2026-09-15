@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - trunk
+      - 'v*.x'
+  pull_request:
+    branches:
+      - trunk
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Fix Zig cache
+        run: mkdir -p .zig-cache/tmp ~/.cache/zig/tmp
+
+      - name: Check formatting
+        run: zig fmt --check .
+        
+      - name: Test Build aarch64
+        run: zig build -Darch=aarch64
+
+      - name: Test Build riscv64
+        run: zig build -Darch=riscv64
+
+      - name: Test Build raspberry_pi4
+        run: zig build -Dboard=raspberry_pi4
+
+      - name: Test Build apple
+        run: zig build -Dboard=apple
