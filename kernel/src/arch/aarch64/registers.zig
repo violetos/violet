@@ -32,8 +32,12 @@ pub const ExceptionLevel = enum(u4) {
 };
 
 pub inline fn currentEL() ExceptionLevel {
-    const el = asm volatile ("mrs %[res], currentel" : [res] "=r" (-> u64));
-    const sp = asm volatile ("mrs %[res], spsel" : [res] "=r" (-> u64));
+    const el = asm volatile ("mrs %[res], currentel"
+        : [res] "=r" (-> u64),
+    );
+    const sp = asm volatile ("mrs %[res], spsel"
+        : [res] "=r" (-> u64),
+    );
     const combined = el | sp;
 
     return @enumFromInt(@as(u4, @truncate(combined)));
