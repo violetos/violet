@@ -86,7 +86,14 @@ jobs:
           mkdir -p release_files
           mkdir -p release_files/alx/
           cp build/apple_alx.json release_files/alx/installer_data.json || true
-          cp zig-out/*.img release_files/ || true
+          
+          for img in zig-out/*.img; do
+            if [ -f "$img" ]; then
+              filename=$(basename "$img")
+              xz -T0 -c "$img" > "release_files/${filename}.xz"
+            fi
+          done
+          
           cp zig-out/*.zip release_files/ || true
           cp LICENSE NOTICE.md README.md SUPPORT.md release_files/ || true
 
