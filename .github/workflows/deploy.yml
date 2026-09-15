@@ -1,0 +1,124 @@
+name: Deploy
+
+permissions:
+  contents: write
+
+on:
+  push:
+    tags:
+      - 'nightly'
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          submodules: recursive
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v2
+        with:
+          version: 0.16.0
+
+      - name: Fix Zig cache
+        run: mkdir -p .zig-cache/tmp ~/.cache/zig/tmp
+
+      - name: Build aarch64
+        run: zig build -Darch=aarch64 -Doptimize=ReleaseSafe
+
+      - name: Build riscv64
+        run: zig build -Darch=riscv64 -Doptimize=ReleaseSafe
+
+      - name: Build raspberry_pi4
+        run: zig build -Dboard=raspberry_pi4 -Doptimize=ReleaseSafe
+
+      - name: Build apple
+        run: zig build -Dboard=apple -Doptimize=ReleaseSafe
+
+      - name: Prepare environment
+        id: vars
+        run: |
+          COMMIT_SHA=${GITHUB_SHA::7}
+          TAG_NAME=${{ github.ref_name }}
+          
+          if [[ "$TAG_NAME" == "nightly" ]]; then
+            echo "TARGET_DIR=nightly-$COMMIT_SHA" >> $GITHUB_ENV
+            echo "IS_PRERELEASE=true" >> $GITHUB_ENV
+            echo "RELEASE_NAME=Nightly Build ($COMMIT_SHA)" >> $GITHUB_ENV
+            echo "ALIAS_NAME=nightly" >> $GITHUB_ENV
+          elif [[ "$TAG_NAME" == v*-* ]]; then
+            echo "TARGET_DIR=$TAG_NAME" >> $GITHUB_ENV
+            echo "IS_PRERELEASE=true" >> $GITHUB_ENV
+            echo "RELEASE_NAME=$TAG_NAME" >> $GITHUB_ENV
+            echo "ALIAS_NAME=none" >> $GITHUB_ENV
+          else
+            echo "TARGET_DIR=$TAG_NAME" >> $GITHUB_ENV
+            echo "IS_PRERELEASE=false" >> $GITHUB_ENV
+            echo "RELEASE_NAME=$TAG_NAME" >> $GITHUB_ENV
+            echo "ALIAS_NAME=latest" >> $GITHUB_ENV
+          fi
+
+      - name: Generate changelog
+        id: changelog
+        uses: mikepenz/release-changelog-builder-action@v6
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ env.RELEASE_NAME }}
+          body: |
+            **Release repository**: [repo.violetos.org/${{ env.TARGET_DIR }}](https://repo.violetos.org/${{ env.TARGET_DIR }}/)
+            
+            ${{ steps.changelog.outputs.changelog }}
+          prerelease: ${{ env.IS_PRERELEASE == 'true' }}
+
+      - name: Prepare assets
+        run: |
+          mkdir -p release_files
+          mkdir -p release_files/alx/
+          cp build/apple_alx.json release_files/alx/installer_data.json || true
+          cp zig-out/*.img release_files/ || true
+          cp zig-out/*.zip release_files/ || true
+          cp LICENSE NOTICE.md README.md SUPPORT.md release_files/ || true
+
+      - name: Deploy to repository
+        uses: appleboy/scp-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_NAME }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          source: "release_files/*"
+          target: "/data/${{ env.TARGET_DIR }}/"
+          strip_components: 1
+
+      - name: Post-deploy tasks
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_NAME }}
+          key: ${{ secrets.DEPLOY_KEY }}
+          port: ${{ secrets.DEPLOY_PORT }}
+          script: |
+            cd /data
+
+            if [ "${{ env.ALIAS_NAME }}" != "none" ]; then
+              ln -sfn ${{ env.TARGET_DIR }} ${{ env.ALIAS_NAME }}
+            fi
+
+            if [ "${{ env.IS_PRERELEASE }}" == "false" ]; then
+              DIRS_TO_DELETE=$(ls -dt nightly-* 2>/dev/null | tail -n +2)
+              
+              if [ -n "$DIRS_TO_DELETE" ]; then
+                echo "$DIRS_TO_DELETE" | xargs rm -rf
+              fi
+            fi

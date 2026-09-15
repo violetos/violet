@@ -6,7 +6,7 @@
             "expert": true,
             "boot_object": "m1n1.bin",
             "next_object": "m1n1/boot.bin",
-            "package": "https://github.com/violetos/violet/releases/download/nightly/violet-apple.zip",
+            "package": "https://repo.violetos.org/nightly/violet-apple.zip",
             "supported_fw": [
                 "13.5",
                 "14.8.3"
