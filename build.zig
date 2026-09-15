@@ -277,7 +277,7 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
     {
         switch (arch) {
             .aarch64 => run_cmd.addArgs(&.{
-                "-machine", "virt,secure=off,virtualization=off,pflash0=pflash0,pflash1=pflash1",
+                "-machine", "virt,secure=off,virtualization=on,pflash0=pflash0,pflash1=pflash1",
                 "-cpu",     "max",
             }),
             .riscv64 => run_cmd.addArgs(&.{
