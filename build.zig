@@ -29,7 +29,6 @@ pub fn build(b: *std.Build) !void {
     } } });
 
     const optimize = b.standardOptimizeOption(.{});
-    if (optimize == .ReleaseFast) @panic("ReleaseFast is forbidden");
 
     var root = createImgRoot(b, arch);
     {

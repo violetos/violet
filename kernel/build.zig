@@ -28,7 +28,6 @@ pub fn build(b: *std.Build) !void {
     });
 
     const optimize = b.standardOptimizeOption(.{});
-    if (optimize == .ReleaseFast) @panic("ReleaseFast is forbidden");
 
     const basalt_dep = b.dependency("basalt", .{ .is_module = true });
     const basalt_mod = basalt_dep.module("basalt");
