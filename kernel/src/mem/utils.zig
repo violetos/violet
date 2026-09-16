@@ -801,7 +801,7 @@ pub const PopMode = enum {
 };
 
 /// Should be atomically protected.
-pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode) type {
+pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode, comptime never_dealloc_first: bool) type {
     return struct {
         pub const Item = struct {
             value: T,
@@ -814,6 +814,11 @@ pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode) type {
 
         pub const empty: Self = .{ .list = .{} };
 
+        pub fn deinit(self: *Self) void {
+            self.list.deinit();
+            self.* = .empty;
+        }
+
         pub fn push(self: *Self, item: Item) !void {
             const index = try self.list.append(item);
             self.siftUp(index);
@@ -823,7 +828,13 @@ pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode) type {
             if (self.list.len == 0) return null;
 
             if (self.list.len == 1) {
-                return self.list.pop();
+                if (never_dealloc_first) {
+                    const item = self.list.get(0);
+                    self.list.len = 0;
+                    return item;
+                } else {
+                    return self.list.pop();
+                }
             }
 
             const target_idx = switch (pop_mode) {
@@ -862,6 +873,10 @@ pub fn BinaryHeap(comptime T: type, comptime mode: HeapMode) type {
                 .last => self.findWorstIndex(),
             };
             return self.list.get(target_idx);
+        }
+
+        pub inline fn len(self: *Self) usize {
+            return self.list.len;
         }
 
         inline fn isBetter(a: Item, b: Item) bool {
