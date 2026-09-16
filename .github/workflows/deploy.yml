@@ -85,7 +85,8 @@ jobs:
         run: |
           mkdir -p release_files
           mkdir -p release_files/alx/
-          cp build/apple_alx.json release_files/alx/installer_data.json || true
+          cp build/alx/install.sh release_files/alx/install.sh || true
+          cp build/alx/installer_data.json release_files/alx/installer_data.json || true
           
           for img in zig-out/*.img; do
             if [ -f "$img" ]; then
@@ -121,6 +122,9 @@ jobs:
             if [ "${{ env.ALIAS_NAME }}" != "none" ]; then
               ln -sfn ${{ env.TARGET_DIR }} ${{ env.ALIAS_NAME }}
             fi
+
+            mkdir -p alx/
+            mv -f ${{ env.TARGET_DIR }}/alx/install.sh alx/install.sh
 
             if [ "${{ env.IS_PRERELEASE }}" == "false" ]; then
               DIRS_TO_DELETE=$(ls -dt nightly-* 2>/dev/null | tail -n +2)
