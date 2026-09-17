@@ -428,6 +428,9 @@ pub fn SlotMap(comptime Item: type) type {
             index: u32,
         };
 
+        pub const PtrRef = if (is_arc) ArcRef else *Item;
+        pub const New = struct { Handle, PtrRef };
+
         const FreeHead = packed struct(u64) {
             index: u32,
             tag: u32,
@@ -443,7 +446,7 @@ pub fn SlotMap(comptime Item: type) type {
             self.slots.deinit();
         }
 
-        pub fn insert(self: *Self, item: ActualItem) !struct { Handle, if (is_arc) ArcRef else *Item } {
+        pub fn insert(self: *Self, item: ActualItem) !New {
             var head: FreeHead = @bitCast(self.free_head.load(.acquire));
 
             while (head.index != SENTINEL) {
@@ -541,7 +544,7 @@ pub fn SlotMap(comptime Item: type) type {
             }
         }
 
-        pub fn get(self: *Self, handle: Handle) if (is_arc) ?ArcRef else ?*Item {
+        pub fn get(self: *Self, handle: Handle) ?PtrRef {
             if (handle.generation % 2 == 0) return null;
 
             const slot = self.slots.tryGet(handle.index) orelse return null;
