@@ -1,6 +1,6 @@
 # violetOS
 
-![Zig Version](https://img.shields.io/badge/Zig-0.16.0-orange.svg?logo=zig)
+![Zig Version](https://img.shields.io/badge/Zig-0.17.0-orange.svg?logo=zig)
 ![GitHub License](https://img.shields.io/github/license/YiraSan/violet)
 ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/YiraSan/violet/deploy.yml)
 
@@ -14,7 +14,7 @@
 This project uses [Zig](https://ziglang.org). We recommend using [zvm](https://github.com/tristanisham/zvm) to install and manage Zig versions seamlessly.
 
 > [!NOTE]
-> The required Zig version is `0.16.0`.
+> The required Zig version is `0.17.0`.
 
 To run a virtual instance of violet on your host machine, you will also need [QEMU](https://www.qemu.org) `11.1.1`.
 
@@ -22,13 +22,13 @@ To run a virtual instance of violet on your host machine, you will also need [QE
 
 Thanks to violet's build system, compiling an operating system has never been easier.
 
-```bash
+```sh
 zig build -Dboard=<BOARD>
 ```
 
 See [SUPPORT.md](SUPPORT.md) for a complete list of supported boards. Not specifying any board will create a generic image for a given architecture (default to the host machine) :
 
-```bash
+```sh
 zig build -Darch=<ARCH>
 ```
 
@@ -38,7 +38,7 @@ Supported architectures are `aarch64` and `riscv64`.
 
 To instantly build and boot the OS in a virtual machine, simply type:
 
-```bash
+```sh
 zig build run -Darch=<ARCH>
 ```
 

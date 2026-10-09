@@ -282,8 +282,8 @@ const AddressView = packed struct(u64) {
 
     _ignored_low: u12 = 0, // bits 0-11
 
-    _reserved0: std.meta.Int(.unsigned, gap_bits) = 0,
-    output_address: std.meta.Int(.unsigned, addr_bits) = 0,
+    _reserved0: @Int(.unsigned, gap_bits) = 0,
+    output_address: @Int(.unsigned, addr_bits) = 0,
 
     _ignored_high: u16 = 0, // bits 48-63
 };

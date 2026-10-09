@@ -51,7 +51,7 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
             .arm_pl011, .arm_sbsa_generic_uart, .arm_sbsa_generic_uart_2 => {
                 address = spcr.base_address.address;
                 address_space_id = spcr.base_address.address_space_id;
-                access_size = @intFromEnum(spcr.base_address.access_size);
+                access_size = @backingInt(spcr.base_address.access_size);
                 register_bit_width = spcr.base_address.register_bit_width;
 
                 is_pre_initialized = (spcr.configured_baud_rate == .as_is);
@@ -66,13 +66,13 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
             var i: u32 = 0;
             while (dbg2.getDevice(i)) |dev| : (i += 1) {
                 if (dev.port_type == .serial) {
-                    const subtype: acpi.DebugDeviceInformation.PortSubtypeSerial = @enumFromInt(dev.port_subtype);
+                    const subtype: acpi.DebugDeviceInformation.PortSubtypeSerial = @fromBackingInt(@intCast(dev.port_subtype));
                     switch (subtype) {
                         .arm_pl011, .arm_sbsa_generic_uart => {
                             if (dev.getBaseAddress(0)) |gas| {
                                 address = gas.address;
                                 address_space_id = gas.address_space_id;
-                                access_size = @intFromEnum(gas.access_size);
+                                access_size = @backingInt(gas.access_size);
                                 register_bit_width = gas.register_bit_width;
 
                                 is_pre_initialized = true;

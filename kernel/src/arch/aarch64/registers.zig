@@ -40,7 +40,7 @@ pub inline fn currentEL() ExceptionLevel {
     );
     const combined = el | sp;
 
-    return @enumFromInt(@as(u4, @truncate(combined)));
+    return @fromBackingInt(@intCast(@as(u4, @truncate(combined))));
 }
 
 pub inline fn loadTpidrEl0() u64 {

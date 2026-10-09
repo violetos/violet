@@ -546,7 +546,7 @@ inline fn releaseBits(zone_idx: u32, start_bit: usize, count: usize) void {
         if (std.debug.runtime_safety) {
             std.debug.assert(bitmaps[zone_idx].count() == 0);
         }
-        bitmaps[zone_idx] = ZoneBitSet.initFull();
+        bitmaps[zone_idx] = .full;
         return;
     }
 

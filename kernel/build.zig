@@ -74,7 +74,7 @@ pub fn build(b: *std.Build) !void {
 
     {
         const arch_path = b.fmt("src/arch/{s}/", .{@tagName(arch)});
-        var asm_dir = try b.build_root.handle.openDir(b.graph.io, arch_path, .{ .iterate = true });
+        var asm_dir = try b.root.openDir(b.graph.io, arch_path, .{ .iterate = true });
         defer asm_dir.close(b.graph.io);
 
         var walker = try asm_dir.walk(b.allocator);
@@ -137,23 +137,23 @@ fn getFeaturesSub(arch: std.Target.Cpu.Arch) std.Target.Cpu.Feature.Set {
         .aarch64 => {
             const Feature = std.Target.aarch64.Feature;
 
-            features_sub.addFeature(@intFromEnum(Feature.fp_armv8));
-            features_sub.addFeature(@intFromEnum(Feature.neon));
-            features_sub.addFeature(@intFromEnum(Feature.crypto));
+            features_sub.addFeature(@backingInt(Feature.fp_armv8));
+            features_sub.addFeature(@backingInt(Feature.neon));
+            features_sub.addFeature(@backingInt(Feature.crypto));
         },
         .riscv64 => {
             const Feature = std.Target.riscv.Feature;
 
-            features_sub.addFeature(@intFromEnum(Feature.f));
-            features_sub.addFeature(@intFromEnum(Feature.d));
-            features_sub.addFeature(@intFromEnum(Feature.q));
-            features_sub.addFeature(@intFromEnum(Feature.zfa));
-            features_sub.addFeature(@intFromEnum(Feature.zfhmin));
+            features_sub.addFeature(@backingInt(Feature.f));
+            features_sub.addFeature(@backingInt(Feature.d));
+            features_sub.addFeature(@backingInt(Feature.q));
+            features_sub.addFeature(@backingInt(Feature.zfa));
+            features_sub.addFeature(@backingInt(Feature.zfhmin));
 
-            features_sub.addFeature(@intFromEnum(Feature.v));
-            features_sub.addFeature(@intFromEnum(Feature.zvbb));
-            features_sub.addFeature(@intFromEnum(Feature.zvfhmin));
-            features_sub.addFeature(@intFromEnum(Feature.zvkt));
+            features_sub.addFeature(@backingInt(Feature.v));
+            features_sub.addFeature(@backingInt(Feature.zvbb));
+            features_sub.addFeature(@backingInt(Feature.zvfhmin));
+            features_sub.addFeature(@backingInt(Feature.zvkt));
         },
         else => unreachable,
     }

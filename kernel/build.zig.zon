@@ -2,12 +2,12 @@
     .name = .kernel,
     .version = "0.1.0-dev.1",
     .fingerprint = 0x5dd29aaba54d3297, // Changing this has security and trust implications.
-    .minimum_zig_version = "0.16.0",
+    .minimum_zig_version = "0.17.0",
     .dependencies = .{
         .basalt = .{ .path = "../basalt/" },
         .limine = .{
-            .url = "git+https://github.com/YiraSan/limine-zig/#b4beef55f9ec78ba26c476c0064151abd68dc3d7",
-            .hash = "limine-0.0.0-9W5WJoeOAACY1SMZnljxTCJ0-k_5EiYAeygME-HaHLr7",
+            .url = "git+https://github.com/YiraSan/limine-zig#efbbbdd31c7e2030791d24538c97712e2850c083",
+            .hash = "limine-0.0.0-9W5WJnSOAAA3oFXRSICUuDYU32rzb1ARo-a3pVQ_Fkmk",
         },
     },
     .paths = .{

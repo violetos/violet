@@ -58,7 +58,7 @@ pub fn build(b: *std.Build) !void {
         });
         const kernel_exe = kernel_dep.artifact("kernel");
 
-        if (optimize == .Debug) b.installArtifact(kernel_exe);
+        if (optimize == .debug) b.installArtifact(kernel_exe);
 
         _ = root.addCopyFile(kernel_exe.getEmittedBin(), "core/kernel.elf");
     }

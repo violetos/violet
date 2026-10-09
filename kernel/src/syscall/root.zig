@@ -43,7 +43,7 @@ pub const SyscallFn = *const fn (*arch.interrupts.ReducedFrame) anyerror!void;
 var registers: [basalt.system.call.MAX_CODE]u64 = undefined;
 
 pub fn register(code: basalt.system.call.Code, syscall_fn: SyscallFn) void {
-    registers[@intFromEnum(code)] = @intFromPtr(syscall_fn);
+    registers[@backingInt(code)] = @intFromPtr(syscall_fn);
 }
 
 // --- //

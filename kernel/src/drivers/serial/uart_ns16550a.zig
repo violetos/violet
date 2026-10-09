@@ -63,7 +63,7 @@ inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !v
             .system_memory => blk: {
                 if (stage != .stage2) return;
 
-                const access_size = @intFromEnum(spcr.base_address.access_size);
+                const access_size = @backingInt(spcr.base_address.access_size);
                 const stride: usize = if (access_size > 0)
                     @as(usize, 1) << @intCast(access_size - 1)
                 else
