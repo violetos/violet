@@ -67,9 +67,9 @@ pub const CpuContext = struct {
         const cpu_context = cpu_contexts.getPtr(index).?;
         cpu_context.index = index;
 
-        try arch.interrupts.InterruptsContext.init(&cpu_context.interrupts_context);
-        try mem.phys.PhysContext.init(&cpu_context.phys_context);
-        try sched.SchedContext.init(&cpu_context.sched_context);
+        try cpu_context.interrupts_context.init();
+        try cpu_context.phys_context.init();
+        try cpu_context.sched_context.init();
 
         return cpu_context;
     }
