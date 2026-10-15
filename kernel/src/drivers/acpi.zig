@@ -673,3 +673,39 @@ pub const DebugDeviceInformation = extern struct {
         if (@offsetOf(DebugDeviceInformation, "address_size_offset") != 20) @compileError("Offset mismatch");
     }
 };
+
+pub const TimerFlags = packed struct(u32) {
+    mode: enum(u1) {
+        level_triggered = 0,
+        edge_triggered = 1,
+    },
+    polarity: enum(u1) {
+        active_high = 0,
+        active_low = 1,
+    },
+    always_on: bool,
+    _reserved: u29 = 0,
+};
+
+pub const Gtdt = extern struct {
+    pub const SIGNATURE = "GTDT";
+
+    header: SdtHeader,
+    cnt_control_base: u64 align(4),
+    _reserved0: u32,
+    el1_secure_gsiv: u32,
+    el1_secure_flags: TimerFlags,
+    el1_non_secure_gsiv: u32,
+    el1_non_secure_flags: TimerFlags,
+    el1_virtual_gsiv: u32,
+    el1_virtual_flags: TimerFlags,
+    el2_gsiv: u32,
+    el2_flags: TimerFlags,
+    cnt_read_base: u64 align(4),
+    platform_timer_count: u32,
+    platform_timer_offset: u32,
+
+    // revision >= 3
+    el2_virtual_gsiv: u32,
+    el2_virtual_flags: TimerFlags,
+};
