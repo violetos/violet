@@ -224,7 +224,10 @@ pub const Madt = extern struct {
         pub fn next(self: *Iterator) ?Record {
             if (@intFromPtr(self.current) >= @intFromPtr(self.end)) return null;
 
-            const header: *const RecordHeader = @ptrCast(@alignCast(self.current));
+            const header: *const RecordHeader = blk: {
+                @setRuntimeSafety(false);
+                break :blk @ptrCast(@alignCast(self.current));
+            };
 
             if (header.length < @sizeOf(RecordHeader)) return null;
 
@@ -277,7 +280,10 @@ pub const Madt = extern struct {
 
         pub fn cast(self: *const RecordHeader, comptime T: type) ?*const T {
             if (self.length < @sizeOf(T)) return null;
-            return @ptrCast(@alignCast(self));
+            return blk: {
+                @setRuntimeSafety(false);
+                break :blk @ptrCast(@alignCast(self));
+            };
         }
     };
 
