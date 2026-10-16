@@ -194,17 +194,32 @@ pub const PageTable = struct {
                 var target_state = query.state orelse currentStateOf(result.entry);
 
                 while (result.entry == .table and target_state == .committed and target_pa == null) {
-                    std.debug.assert(target_level > 0);
-                    target_level -= 1;
+                    std.debug.assert(result.level > 0);
+                    target_level = result.level - 1;
                     result = try walk(self, va, target_level, .write);
                     target_state = query.state orelse currentStateOf(result.entry);
                 }
 
-                const new_entry = try nextEntry(query, result.level, result.entry, target_pa);
+                const new_entry = blk: while (true) {
+                    if (nextEntry(query, result.level, result.entry, target_pa)) |entry| {
+                        break :blk entry;
+                    } else |err| {
+                        if (err == phys.Error.OutOfMemory and result.level > level_hint and target_pa == null) {
+                            target_level = result.level - 1;
+                            result = try walk(self, va, target_level, .write);
+                            continue;
+                        }
+                        return err;
+                    }
+                };
 
                 var old_had_global = false;
                 switch (result.entry) {
-                    .table => |child_pa| old_had_global = teardown(child_pa, result.level - 1),
+                    .table => |child_pa| {
+                        tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
+                        arch.cpu.syncStores();
+                        old_had_global = teardown(child_pa, result.level - 1);
+                    },
                     .leaf => |old_leaf| {
                         old_had_global = old_leaf.attributes.permissions.global;
                         const reused = switch (new_entry) {
@@ -214,11 +229,12 @@ pub const PageTable = struct {
                         if (!reused) {
                             invalidateLeaf(result.table_pa, result.index, result.level, old_leaf, va);
                         }
+                        tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
                     },
-                    else => {},
+                    else => {
+                        tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
+                    },
                 }
-
-                tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
 
                 if (needsFlush(result.entry, new_entry)) {
                     const new_global = switch (new_entry) {
@@ -245,7 +261,7 @@ pub const PageTable = struct {
                 seen = result.entry;
                 seen_level = result.level;
                 const leaf_size = levelSize(result.level);
-                step = @min(remaining, leaf_size - (va % leaf_size));
+                step = @min(remaining, leaf_size - (va & (leaf_size - 1)));
             }
 
             accumulate(Level, &acc_level, &first_level, seen_level);
@@ -272,7 +288,14 @@ pub const PageTable = struct {
                     accumulate(State, &acc_state, &first_state, .committed);
                     accumulate(Permissions, &acc_perms, &first_perms, leaf.attributes.permissions);
                     accumulate(MemType, &acc_mem_type, &first_mem_type, leaf.attributes.mem_type);
-                    accumulate(u64, &acc_phys, &first_phys, leaf.physical_address - off);
+
+                    const intra_leaf_off = va & (levelSize(seen_level) - 1);
+                    const current_pa = leaf.physical_address + intra_leaf_off;
+                    if (current_pa >= off) {
+                        accumulate(u64, &acc_phys, &first_phys, current_pa - off);
+                    } else {
+                        poison(u64, &acc_phys, &first_phys);
+                    }
                 },
                 .table => unreachable,
             }
@@ -381,24 +404,30 @@ inline fn invalidateLeaf(table_pa: u64, idx: usize, level: Level, leaf: Leaf, va
 inline fn demote(va: u64, parent_pa: u64, idx: usize, level: Level, entry: Entry) !u64 {
     std.debug.assert(level > 0);
 
-    if (entry == .leaf) invalidateLeaf(parent_pa, idx, level, entry.leaf, va);
-
     const child_level = level - 1;
     const child_pa = try phys.allocPage();
     const child = tableSlice(child_pa);
     const sub_size = levelSize(child_level);
 
-    for (0..entries_per_table) |i| {
-        const child_entry: Entry = switch (entry) {
-            .leaf => |leaf| .{ .leaf = .{
-                .physical_address = leaf.physical_address + i * sub_size,
-                .attributes = leaf.attributes,
-            } },
-            .uncommitted => |attrs| .{ .uncommitted = attrs },
-            .guard => .guard,
-            else => unreachable,
-        };
-        child[i] = arch.paging.encode(child_level, child_entry);
+    switch (entry) {
+        .leaf => |leaf| {
+            for (0..entries_per_table) |i| {
+                child[i] = arch.paging.encode(child_level, .{ .leaf = .{
+                    .physical_address = leaf.physical_address + i * sub_size,
+                    .attributes = leaf.attributes,
+                } });
+            }
+            invalidateLeaf(parent_pa, idx, level, leaf, va);
+        },
+        .uncommitted => |attrs| {
+            const encoded = arch.paging.encode(child_level, .{ .uncommitted = attrs });
+            @memset(child, encoded);
+        },
+        .guard => {
+            const encoded = arch.paging.encode(child_level, .guard);
+            @memset(child, encoded);
+        },
+        else => unreachable,
     }
 
     arch.cpu.syncStores();
@@ -475,7 +504,10 @@ fn nextEntry(query: *const Query, level: Level, current: Entry, target_pa: ?u64)
 
             const pa = target_pa orelse switch (current) {
                 .leaf => |l| l.physical_address,
-                else => try phys.allocContiguous(physPagesFor(level)),
+                else => if (level == 0)
+                    try phys.allocPage()
+                else
+                    try phys.allocContiguous(physPagesFor(level)),
             };
 
             break :blk .{ .leaf = .{
