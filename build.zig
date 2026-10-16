@@ -174,7 +174,7 @@ fn setupFirmware(b: *std.Build, img_root: *std.Build.Step.WriteFile, board: ?Boa
 fn makeImageExe(b: *std.Build) *std.Build.Step.Compile {
     const make_img = b.createModule(.{
         .target = b.graph.host,
-        .optimize = .ReleaseSafe,
+        .optimize = .safe,
         .link_libc = true,
     });
 

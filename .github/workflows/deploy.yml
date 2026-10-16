@@ -27,16 +27,16 @@ jobs:
           version: 0.17.0
 
       - name: Build aarch64
-        run: zig build -Darch=aarch64 -Doptimize=ReleaseSafe
+        run: zig build -Darch=aarch64 -Doptimize=safe
 
       - name: Build riscv64
-        run: zig build -Darch=riscv64 -Doptimize=ReleaseSafe
+        run: zig build -Darch=riscv64 -Doptimize=safe
 
       - name: Build raspberry_pi4
-        run: zig build -Dboard=raspberry_pi4 -Doptimize=ReleaseSafe
+        run: zig build -Dboard=raspberry_pi4 -Doptimize=safe
 
       - name: Build apple
-        run: zig build -Dboard=apple -Doptimize=ReleaseSafe
+        run: zig build -Dboard=apple -Doptimize=safe
 
       - name: Prepare environment
         id: vars
