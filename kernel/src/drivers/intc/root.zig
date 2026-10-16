@@ -15,52 +15,37 @@
 // --- dependencies --- //
 
 const std = @import("std");
-
-const log = std.log.scoped(.ints);
+const basalt = @import("basalt");
 
 // --- imports --- //
 
 const kernel = @import("root");
 
-const arch = kernel.arch;
-const drivers = kernel.drivers;
-const sched = kernel.sched;
-const mem = kernel.mem;
+// --- exports -- //
+
+pub const Domain = @import("Domain.zig");
+pub const TrigIrq = @import("TrigIrq.zig");
+pub const VirtIrq = @import("VirtIrq.zig");
 
 // --- drivers/intc/root.zig --- //
 
-pub const IrqHandler = *const fn (irq: u32) void;
+var root: Domain.New = .{ .null, undefined };
 
-pub const Controller = struct {
-    ptr: *anyopaque,
-    vtable: *const VTable,
-
-    pub const VTable = struct {
-        register: *const fn (ptr: *anyopaque, irq: u32, handler: IrqHandler) void,
-        acknowledge: *const fn (ptr: *anyopaque) ?u32,
-        dispatch: *const fn (ptr: *anyopaque, irq: u32) void,
-    };
-
-    pub inline fn register(self: Controller, irq: u32, handler: IrqHandler) void {
-        self.vtable.register(self.ptr, irq, handler);
-    }
-
-    pub inline fn acknowledge(self: Controller) ?u32 {
-        return self.vtable.acknowledge(self.ptr);
-    }
-
-    pub inline fn dispatch(self: Controller, irq: u32) void {
-        self.vtable.dispatch(self.ptr, irq);
-    }
-};
-
-pub var active_controller: ?Controller = null;
-
-pub fn setController(controller: Controller) void {
-    active_controller = controller;
+pub fn isRootRegistered() bool {
+    return !root.@"0".isNull();
 }
 
-pub fn register(irq: u32, handler: IrqHandler) void {
-    const ctrl = active_controller orelse @panic("register() called before an interrupt controller was set");
-    ctrl.register(irq, handler);
+pub fn getRoot() !*Domain {
+    if (!isRootRegistered()) return error.NoRegisteredRoot;
+    return root.@"1".payload();
+}
+
+pub fn registerRoot(root_dom: Domain) !void {
+    if (isRootRegistered()) return error.AlreadyRegistered;
+    root = try Domain.new(root_dom);
+}
+
+pub fn handle() !void {
+    const root_dom = try getRoot();
+    _ = root_dom;
 }

@@ -36,15 +36,19 @@ pub const Stage = enum {
     stage1,
     /// The virtual memory manager is fully available.
     stage2,
-    /// before Interrupt Controller, Scheduler, Syscalls and Timer are initialized.
+    /// Interrupt Controller own stage.
     stage3,
+    /// Interrupt Controller is initialized.
+    stage4,
 };
 
 pub const Driver = enum {
+    // intc
+    gicv2,
     // serial
+    legacy_sbi,
     uart_ns16550a,
     uart_pl011,
-    legacy_sbi,
 
     pub fn isCompatible(comptime driver: Driver) bool {
         const Module = driver.moduleOf();
@@ -56,9 +60,11 @@ pub const Driver = enum {
 
     pub fn moduleOf(comptime driver: Driver) type {
         return switch (driver) {
+            .gicv2 => @import("intc/impls/gicv2.zig"),
+
+            .legacy_sbi => @import("serial/legacy_sbi.zig"),
             .uart_ns16550a => @import("serial/uart_ns16550a.zig"),
             .uart_pl011 => @import("serial/uart_pl011.zig"),
-            .legacy_sbi => @import("serial/legacy_sbi.zig"),
         };
     }
 };
@@ -114,16 +120,6 @@ pub fn runStage(comptime stage: Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) void 
         Module.discover(stage, xsdt, dt) catch |err| {
             std.debug.panic("driver '{s}' init at {s} failed: {s}", .{ @tagName(stage), @typeName(Module), @errorName(err) });
         };
-    }
-}
-
-pub fn runLocal() void {
-    inline for (all_modules) |Module| {
-        if (@hasDecl(Module, "initLocal")) {
-            Module.initLocal() catch |err| {
-                std.debug.panic("driver '{s}' local init failed: {s}", .{ @typeName(Module), @errorName(err) });
-            };
-        }
     }
 }
 

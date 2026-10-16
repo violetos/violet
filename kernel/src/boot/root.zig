@@ -100,11 +100,26 @@ export fn kernel_entry() callconv(.c) noreturn {
 pub fn stage2_entry() callconv(.c) noreturn {
     drivers.runStage(.stage2, getXsdt(), null);
 
+    drivers.serial.clear(null);
+    std.log.info("version {s}", .{build_options.version});
+
     kernel.syscall.init() catch |err| {
         std.debug.panic("kernel.syscall.init failed: {s}", .{@errorName(err)});
     };
 
     drivers.runStage(.stage3, getXsdt(), null);
+
+    {
+        const root_dom = drivers.intc.getRoot() catch |err| {
+            std.debug.panic("Root.InterruptController: {s}", .{@errorName(err)});
+        };
+
+        root_dom.initLocal() catch |err| {
+            std.debug.panic("Root.InterruptController.initLocal: {s}", .{@errorName(err)});
+        };
+    }
+
+    drivers.runStage(.stage4, getXsdt(), null);
 
     if (framebuffer_request.response) |fbr| {
         const fb_response: *limine.FramebufferResponse = mem.updatePtr(limine.FramebufferResponse, fbr);
@@ -121,9 +136,6 @@ pub fn stage2_entry() callconv(.c) noreturn {
             }
         }
     }
-
-    drivers.serial.clear(null);
-    std.log.info("version {s}", .{build_options.version});
 
     const available_mib = mem.phys.availablePages() * mem.paging.page_size / 1024 / 1024;
     if (available_mib < 384) std.debug.panic("available memory: {} MiB is under 384 MiB requirement", .{available_mib});

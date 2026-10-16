@@ -163,16 +163,9 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.
 fn irqHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     captureFrame(frame, .{ .via_eret = saved_spsr });
 
-    const ctrl = drivers.intc.active_controller orelse {
-        log.err("IRQ trapped with no interrupt controller registered", .{});
-        arch.cpu.halt();
+    drivers.intc.handle() catch |err| {
+        log.warn("unhandled interrupt: {s}", .{@errorName(err)});
     };
-
-    if (ctrl.acknowledge()) |irq_id| {
-        ctrl.dispatch(irq_id);
-    } else {
-        log.warn("spurious interrupt", .{});
-    }
 
     restoreCurrent(frame, .{ .via_eret = saved_spsr });
 }

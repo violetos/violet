@@ -173,16 +173,9 @@ fn syncHandler(code: u64, frame: *ReducedFrame) void {
 fn irqHandler(code: u64) void {
     switch (code) {
         1, 5, 9 => { // supervisor software / timer / external interrupt
-            const ctrl = drivers.intc.active_controller orelse {
-                log.err("interrupt trapped with no interrupt controller registered", .{});
-                arch.cpu.halt();
+            drivers.intc.handle() catch |err| {
+                log.warn("unhandled interrupt: {s}", .{@errorName(err)});
             };
-
-            if (ctrl.acknowledge()) |irq_id| {
-                ctrl.dispatch(irq_id);
-            } else {
-                log.warn("spurious interrupt", .{});
-            }
         },
         else => {
             log.err("unexpected interrupt (cause={})", .{code});

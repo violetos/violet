@@ -426,6 +426,12 @@ pub fn SlotMap(comptime Item: type) type {
         pub const Handle = packed struct(u64) {
             generation: u32,
             index: u32,
+
+            pub const @"null": Handle = .{ .generation = 0, .index = 0 };
+
+            pub inline fn isNull(self: Handle) bool {
+                return self.generation % 2 == 0;
+            }
         };
 
         pub const PtrRef = if (is_arc) ArcRef else *Item;
