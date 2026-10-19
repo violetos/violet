@@ -61,10 +61,11 @@ pub const Driver = enum {
     pub fn moduleOf(comptime driver: Driver) type {
         return switch (driver) {
             .gicv2 => @import("intc/impls/gicv2.zig"),
+            .gicv3 => @import("intc/impls/gicv3.zig"),
 
-            .legacy_sbi => @import("serial/legacy_sbi.zig"),
-            .uart_ns16550a => @import("serial/uart_ns16550a.zig"),
-            .uart_pl011 => @import("serial/uart_pl011.zig"),
+            .legacy_sbi => @import("serial/impls/legacy_sbi.zig"),
+            .uart_ns16550a => @import("serial/impls/uart_ns16550a.zig"),
+            .uart_pl011 => @import("serial/impls/uart_pl011.zig"),
         };
     }
 };
