@@ -240,11 +240,28 @@ pub fn NodeList(comptime Item: type, comptime node_size: ?usize) type {
     if (@sizeOf(Item) > 4 * 1024) @compileError("Item cannot exceed 4 KiB");
 
     return struct {
+        const Self = @This();
+
         const NodePtr = std.atomic.Value(?*Node);
         const EntryPtr = std.atomic.Value(?[*]Item);
 
         const ENTRIES_PER_NODE = NODE_SIZE / @sizeOf(EntryPtr) - 1;
         const ITEMS_PER_ENTRY = PAGE_SIZE / @sizeOf(Item);
+
+        const Coords = struct {
+            node_index: usize,
+            entry_index: usize,
+            item_index: usize,
+        };
+
+        inline fn resolveIndex(index: usize) Coords {
+            const entry_global_index = index / ITEMS_PER_ENTRY;
+            return .{
+                .node_index = entry_global_index / ENTRIES_PER_NODE,
+                .entry_index = entry_global_index % ENTRIES_PER_NODE,
+                .item_index = index % ITEMS_PER_ENTRY,
+            };
+        }
 
         const Node = struct {
             next_node: NodePtr,
@@ -260,6 +277,11 @@ pub fn NodeList(comptime Item: type, comptime node_size: ?usize) type {
                 return node;
             }
 
+            pub inline fn destroyEmpty(self: *Node) void {
+                const node_pa = mem.fromHhdm(Node, self);
+                phys.freeContiguous(node_pa, NODE_PAGECOUNT);
+            }
+
             pub fn destroy(self: *Node) void {
                 var next_node: ?*Node = self;
                 while (next_node) |node| {
@@ -271,90 +293,66 @@ pub fn NodeList(comptime Item: type, comptime node_size: ?usize) type {
                         }
                     }
 
-                    const node_pa = mem.fromHhdm(Node, node);
-                    phys.freeContiguous(node_pa, NODE_PAGECOUNT);
+                    node.destroyEmpty();
                 }
             }
         };
 
         first_node: NodePtr = .init(null),
 
-        pub fn deinit(self: *@This()) void {
-            if (self.first_node.load(.monotonic)) |first_node| {
+        pub fn deinit(self: *Self) void {
+            if (self.first_node.swap(null, .acquire)) |first_node| {
                 first_node.destroy();
             }
         }
 
-        pub fn get(self: *@This(), index: usize) !*Item {
-            const entry_global_index = index / ITEMS_PER_ENTRY;
-            const item_index = index % ITEMS_PER_ENTRY;
-            const node_index = entry_global_index / ENTRIES_PER_NODE;
-            const entry_index = entry_global_index % ENTRIES_PER_NODE;
+        pub fn get(self: *Self, index: usize) !*Item {
+            const coords = resolveIndex(index);
 
             var node_ptr: *NodePtr = &self.first_node;
             var node: *Node = undefined;
-            var current_node_index: usize = 0;
-            while (true) {
-                if (node_ptr.load(.acquire)) |n| {
-                    node = n;
-                    node_ptr = &n.next_node;
-                } else {
+
+            for (0..coords.node_index + 1) |_| {
+                node = node_ptr.load(.acquire) orelse blk: {
                     const new_node = try Node.create();
-
-                    if (node_ptr.cmpxchgStrong(null, new_node, .acq_rel, .monotonic) == null) {
-                        node = new_node;
-                        node_ptr = &new_node.next_node;
-                    } else {
-                        new_node.destroy();
-                        continue;
+                    if (node_ptr.cmpxchgStrong(null, new_node, .acq_rel, .acquire)) |existing| {
+                        new_node.destroyEmpty();
+                        break :blk existing.?;
                     }
-                }
-
-                if (current_node_index == node_index) break;
-                current_node_index += 1;
+                    break :blk new_node;
+                };
+                node_ptr = &node.next_node;
             }
 
-            const entry_ptr = &node.entries[entry_index];
-            const entry = blk: {
-                while (true) {
-                    if (entry_ptr.load(.acquire)) |e| {
-                        break :blk e;
-                    } else {
-                        const new_entry_pa = try phys.allocPage();
-                        const new_entry: [*]Item = @ptrCast(mem.toHhdm(Item, new_entry_pa));
+            const entry_ptr = &node.entries[coords.entry_index];
+            const entry = entry_ptr.load(.acquire) orelse blk: {
+                const new_entry_pa = try phys.allocPage();
+                @memset(mem.toHhdm([PAGE_SIZE]u8, new_entry_pa), 0);
+                const new_entry: [*]Item = @ptrCast(mem.toHhdm(Item, new_entry_pa));
 
-                        @memset(mem.toHhdm([PAGE_SIZE]u8, new_entry_pa), 0);
-
-                        if (entry_ptr.cmpxchgStrong(null, new_entry, .acq_rel, .monotonic) == null) {
-                            break :blk new_entry;
-                        } else {
-                            phys.freePage(new_entry_pa);
-                            continue;
-                        }
-                    }
+                if (entry_ptr.cmpxchgStrong(null, new_entry, .acq_rel, .acquire)) |existing| {
+                    phys.freePage(new_entry_pa);
+                    break :blk existing.?;
                 }
+                break :blk new_entry;
             };
 
-            return &entry[item_index];
+            return &entry[coords.item_index];
         }
 
-        pub fn tryGet(self: *@This(), index: usize) ?*Item {
-            const entry_global_index = index / ITEMS_PER_ENTRY;
-            const item_index = index % ITEMS_PER_ENTRY;
-            const node_index = entry_global_index / ENTRIES_PER_NODE;
-            const entry_index = entry_global_index % ENTRIES_PER_NODE;
+        pub fn tryGet(self: *const Self, index: usize) ?*Item {
+            const coords = resolveIndex(index);
 
             var node = self.first_node.load(.acquire) orelse return null;
-            var current_node_index: usize = 0;
-            while (current_node_index != node_index) : (current_node_index += 1) {
+            for (0..coords.node_index) |_| {
                 node = node.next_node.load(.acquire) orelse return null;
             }
 
-            const entry = node.entries[entry_index].load(.acquire) orelse return null;
-            return &entry[item_index];
+            const entry = node.entries[coords.entry_index].load(.acquire) orelse return null;
+            return &entry[coords.item_index];
         }
 
-        pub fn updateHhdm(self: *@This()) void {
+        pub fn updateHhdm(self: *Self) void {
             var next_ptr = &self.first_node;
             var next_node = self.first_node.load(.monotonic);
             while (next_node) |node| {
