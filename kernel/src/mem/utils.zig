@@ -377,6 +377,13 @@ pub fn NodeList(comptime Item: type, comptime node_size: ?usize) type {
     };
 }
 
+inline fn hasDecl(comptime T: type, comptime name: []const u8) bool {
+    return switch (@typeInfo(T)) {
+        .@"struct", .@"union", .@"enum", .@"opaque" => @hasDecl(T, name),
+        else => false,
+    };
+}
+
 pub fn SlotMap(comptime Item: type) type {
     const is_arc = @hasDecl(Item, "__SlotMap__Arc");
 
@@ -392,7 +399,8 @@ pub fn SlotMap(comptime Item: type) type {
             pub fn release(self: *ArcRef) void {
                 std.debug.assert(!self.released);
                 self.released = true;
-                self.map.releaseRef(self.index);
+                const slot: *Slot = @fieldParentPtr("item", self.item);
+                self.map.releaseSlot(slot, self.index);
             }
 
             pub fn payload(self: *const ArcRef) *Item.Payload {
@@ -402,7 +410,8 @@ pub fn SlotMap(comptime Item: type) type {
 
             pub fn clone(self: *const ArcRef) ArcRef {
                 std.debug.assert(!self.released);
-                _ = tryAcquire(&self.item.refcount);
+                const prev = self.item.refcount.fetchAdd(1, .monotonic);
+                std.debug.assert(prev > 0);
                 return self.*;
             }
 
@@ -447,6 +456,20 @@ pub fn SlotMap(comptime Item: type) type {
         free_head: std.atomic.Value(u64) = .init(@bitCast(FreeHead{ .index = SENTINEL, .tag = 0 })),
 
         pub fn deinit(self: *Self) void {
+            if (comptime hasDecl(ActualItem, "SlotMap_deinit")) {
+                const max_index = self.len.load(.acquire);
+                for (0..max_index) |i| {
+                    if (self.slots.tryGet(i)) |slot| {
+                        if (slot.generation.load(.acquire) % 2 != 0) {
+                            if (comptime is_arc) {
+                                slot.item.value.SlotMap_deinit();
+                            } else {
+                                slot.item.SlotMap_deinit();
+                            }
+                        }
+                    }
+                }
+            }
             self.slots.deinit();
         }
 
@@ -455,7 +478,10 @@ pub fn SlotMap(comptime Item: type) type {
 
             while (head.index != SENTINEL) {
                 const slot = self.slots.tryGet(head.index) orelse unreachable;
-                const new_head: FreeHead = .{ .index = slot.next_free.load(.monotonic), .tag = head.tag +% 1 };
+                const new_head: FreeHead = .{
+                    .index = slot.next_free.load(.monotonic),
+                    .tag = head.tag +% 1,
+                };
 
                 if (self.free_head.cmpxchgWeak(@bitCast(head), @bitCast(new_head), .acq_rel, .acquire)) |actual| {
                     head = @bitCast(actual);
@@ -468,7 +494,7 @@ pub fn SlotMap(comptime Item: type) type {
 
                 if (comptime is_arc) {
                     slot.item.value = item;
-                    slot.item.refcount.store(1, .release);
+                    slot.item.refcount.store(1, .monotonic);
                 } else {
                     slot.item = item;
                 }
@@ -481,26 +507,29 @@ pub fn SlotMap(comptime Item: type) type {
             }
 
             const index = self.len.fetchAdd(1, .monotonic);
+            std.debug.assert(index != SENTINEL);
             const slot = try self.slots.get(index);
+
             if (comptime is_arc) {
-                slot.item = .init(item);
+                slot.item.value = item;
+                slot.item.refcount.store(1, .monotonic);
             } else {
                 slot.item = item;
             }
-            slot.generation = .init(1);
+
+            slot.generation.store(1, .release);
             return .{
                 .{ .generation = 1, .index = index },
                 if (comptime is_arc) ArcRef{ .map = self, .index = index, .item = &slot.item } else &slot.item,
             };
         }
 
-        fn pushFree(self: *Self, index: u32) void {
-            const slot = self.slots.tryGet(index) orelse unreachable;
-            var head: FreeHead = @bitCast(self.free_head.load(.acquire));
+        fn pushFree(self: *Self, slot: *Slot, index: u32) void {
+            var head: FreeHead = @bitCast(self.free_head.load(.monotonic));
             while (true) {
                 slot.next_free.store(head.index, .monotonic);
                 const new_head: FreeHead = .{ .index = index, .tag = head.tag +% 1 };
-                if (self.free_head.cmpxchgWeak(@bitCast(head), @bitCast(new_head), .release, .acquire)) |actual| {
+                if (self.free_head.cmpxchgWeak(@bitCast(head), @bitCast(new_head), .release, .monotonic)) |actual| {
                     head = @bitCast(actual);
                     continue;
                 }
@@ -509,30 +538,33 @@ pub fn SlotMap(comptime Item: type) type {
         }
 
         fn enqueueFree(self: *Self, handle: Handle) void {
+            if (handle.isNull()) return;
+
             const slot = self.slots.tryGet(handle.index) orelse return;
             const freed_gen = handle.generation +% 1;
-            if (slot.generation.cmpxchgStrong(handle.generation, freed_gen, .release, .monotonic) != null) {
+            if (slot.generation.cmpxchgStrong(handle.generation, freed_gen, .acq_rel, .monotonic) != null) {
                 return;
             }
-            self.pushFree(handle.index);
+
+            if (comptime hasDecl(ActualItem, "SlotMap_deinit")) {
+                slot.item.SlotMap_deinit();
+            }
+
+            self.pushFree(slot, handle.index);
         }
 
-        fn releaseRef(self: *Self, index: u32) void {
-            const slot = self.slots.tryGet(index) orelse return;
-
+        fn releaseSlot(self: *Self, slot: *Slot, index: u32) void {
             const prev = slot.item.refcount.fetchSub(1, .release);
+            std.debug.assert(prev > 0);
             if (prev == 1) {
                 _ = slot.item.refcount.load(.acquire);
+                _ = slot.generation.fetchAdd(1, .release);
 
-                const type_info = comptime @typeInfo(Item.Payload);
-                if (type_info == .@"struct" or type_info == .@"union" or type_info == .@"enum" or type_info == .@"opaque") {
-                    if (comptime @hasDecl(Item.Payload, "SlotMap_deinit")) {
-                        slot.item.value.SlotMap_deinit();
-                    }
+                if (comptime hasDecl(ActualItem, "SlotMap_deinit")) {
+                    slot.item.value.SlotMap_deinit();
                 }
 
-                _ = slot.generation.fetchAdd(1, .release);
-                self.pushFree(index);
+                self.pushFree(slot, index);
             }
         }
 
@@ -549,21 +581,21 @@ pub fn SlotMap(comptime Item: type) type {
         }
 
         pub fn get(self: *Self, handle: Handle) ?PtrRef {
-            if (handle.generation % 2 == 0) return null;
+            if (handle.isNull()) return null;
 
             const slot = self.slots.tryGet(handle.index) orelse return null;
+            if (slot.generation.load(.acquire) != handle.generation) return null;
 
             if (comptime is_arc) {
                 if (!tryAcquire(&slot.item.refcount)) return null;
 
                 if (slot.generation.load(.acquire) != handle.generation) {
-                    self.releaseRef(handle.index);
+                    self.releaseSlot(slot, handle.index);
                     return null;
                 }
 
                 return ArcRef{ .map = self, .index = handle.index, .item = &slot.item };
             } else {
-                if (slot.generation.load(.acquire) != handle.generation) return null;
                 return &slot.item;
             }
         }
@@ -577,7 +609,7 @@ pub fn SlotMap(comptime Item: type) type {
         }
 
         pub fn updateHhdm(self: *Self) void {
-            if (comptime @hasDecl(ActualItem, "SlotMap_updateHhdm")) {
+            if (comptime hasDecl(ActualItem, "SlotMap_updateHhdm")) {
                 const max_index = self.len.load(.monotonic);
                 for (0..max_index) |i| {
                     if (self.slots.tryGet(i)) |slot| {
