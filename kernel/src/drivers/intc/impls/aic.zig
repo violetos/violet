@@ -1,0 +1,36 @@
+// Copyright (c) 2024-2026 YiraSan
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//    http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// --- dependencies --- //
+
+const std = @import("std");
+const basalt = @import("basalt");
+
+// --- imports --- //
+
+const kernel = @import("root");
+
+const drivers = kernel.drivers;
+const acpi = drivers.acpi;
+
+// --- drivers/intc/impls/gicv2.zig --- //
+
+pub const architectures: []const std.Target.Cpu.Arch = &.{.aarch64};
+pub const discover_stage: ?drivers.Stage = .stage3;
+
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+    _ = stage;
+    _ = xsdt;
+    _ = dt;
+}

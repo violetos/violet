@@ -24,7 +24,6 @@ const kernel = @import("root");
 // --- exports -- //
 
 pub const Domain = @import("Domain.zig");
-pub const TrigIrq = @import("TrigIrq.zig");
 pub const VirtIrq = @import("VirtIrq.zig");
 
 // --- drivers/intc/root.zig --- //

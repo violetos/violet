@@ -21,6 +21,16 @@ const basalt = @import("basalt");
 
 const kernel = @import("root");
 
-// --- drivers/intc/TrigIrq.zig --- //
+const drivers = kernel.drivers;
+const acpi = drivers.acpi;
 
-// ...
+// --- drivers/intc/impls/gicv2.zig --- //
+
+pub const architectures: []const std.Target.Cpu.Arch = &.{.aarch64};
+pub const discover_stage: ?drivers.Stage = .stage3;
+
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+    _ = stage;
+    _ = xsdt;
+    _ = dt;
+}

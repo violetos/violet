@@ -44,7 +44,11 @@ pub const Stage = enum {
 
 pub const Driver = enum {
     // intc
+    aia,
+    aic,
     gicv2,
+    gicv3,
+
     // serial
     legacy_sbi,
     uart_ns16550a,
@@ -60,6 +64,8 @@ pub const Driver = enum {
 
     pub fn moduleOf(comptime driver: Driver) type {
         return switch (driver) {
+            .aia => @import("intc/impls/aia.zig"),
+            .aic => @import("intc/impls/aic.zig"),
             .gicv2 => @import("intc/impls/gicv2.zig"),
             .gicv3 => @import("intc/impls/gicv3.zig"),
 
