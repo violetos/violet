@@ -11,8 +11,8 @@
             .hash = "N-V-__8AAM3cbAB5OOIE8oANB4sch2oD96OdWxvgCx6HXe0n",
         },
         .limine_binary = .{
-            .url = "https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.3/limine-binary.tar.xz",
-            .hash = "N-V-__8AACENVwBOv1AOJtvdvt1OdWlY7HLlCyumtO4j9hNh",
+            .url = "https://github.com/Limine-Bootloader/Limine/releases/download/v12.9.4/limine-binary.tar.xz",
+            .hash = "N-V-__8AALV1VwCEdLFLwGtwVa-D27MqqO9fNMwMxF809fDT",
         },
         .fatfs = .{
             .url = "git+https://github.com/abbrev/fatfs#ab992fcf2926b8a1ee3f0a8f9cefb6584174100d",
