@@ -29,6 +29,20 @@ pub const ExceptionLevel = enum(u4) {
     el2t = 0b1000,
     el2h = 0b1001,
     _,
+
+    pub inline fn isEl1(self: @This()) bool {
+        return switch (self) {
+            .el1t, .el1h => true,
+            else => false,
+        };
+    }
+
+    pub inline fn isEl2(self: @This()) bool {
+        return switch (self) {
+            .el2t, .el2h => true,
+            else => false,
+        };
+    }
 };
 
 pub inline fn currentEL() ExceptionLevel {
