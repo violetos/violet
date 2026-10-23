@@ -121,6 +121,10 @@ pub fn stage2_entry() callconv(.c) noreturn {
 
     drivers.runStage(.stage4, getXsdt(), null);
 
+    drivers.timer.initPerCpu() catch |err| {
+        std.debug.panic("drivers.timer.initPerCpu: {s}", .{@errorName(err)});
+    };
+
     if (framebuffer_request.response) |fbr| {
         const fb_response: *limine.FramebufferResponse = mem.updatePtr(limine.FramebufferResponse, fbr);
 

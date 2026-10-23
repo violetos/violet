@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) !void {
             if (board) |bo|
                 try concat(b, bo.getSoC().getDrivers(), bo.getDrivers())
             else switch (arch) {
-                .aarch64 => "uart_pl011,gicv2",
+                .aarch64 => "uart_pl011,gicv2,arm_generic",
                 .riscv64 => "uart_ns16550a",
                 else => "",
             };
@@ -375,7 +375,7 @@ pub const SoC = enum {
 
     pub fn getDrivers(self: SoC) []const u8 {
         return switch (self) {
-            .bcm2711 => "uart_pl011,gicv2",
+            .bcm2711 => "uart_pl011,gicv2,arm_generic",
             else => "",
         };
     }

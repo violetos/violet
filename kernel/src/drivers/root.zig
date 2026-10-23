@@ -22,6 +22,7 @@ const build_options = @import("build_options");
 
 pub const intc = @import("intc/root.zig");
 pub const serial = @import("serial/root.zig");
+pub const timer = @import("timer/root.zig");
 
 pub const acpi = @import("acpi.zig");
 
@@ -54,6 +55,9 @@ pub const Driver = enum {
     uart_ns16550a,
     uart_pl011,
 
+    // timer
+    arm_generic,
+
     pub fn isCompatible(comptime driver: Driver) bool {
         const Module = driver.moduleOf();
         for (Module.architectures) |arch| {
@@ -72,6 +76,8 @@ pub const Driver = enum {
             .legacy_sbi => @import("serial/impls/legacy_sbi.zig"),
             .uart_ns16550a => @import("serial/impls/uart_ns16550a.zig"),
             .uart_pl011 => @import("serial/impls/uart_pl011.zig"),
+
+            .arm_generic => @import("timer/impls/arm_generic.zig"),
         };
     }
 };

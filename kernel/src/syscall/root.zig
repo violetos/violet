@@ -21,8 +21,9 @@ const build_options = @import("build_options");
 // --- imports --- //
 
 const kernel = @import("root");
-
 const arch = kernel.arch;
+
+const timer = @import("timer.zig");
 
 // --- syscall/root.zig --- //
 
@@ -35,6 +36,8 @@ pub fn init() !void {
     @memset(&registers, 0);
     register(.null, &null_syscall);
     basalt.system.call.kit = &kit;
+
+    try timer.init();
 }
 
 fn null_syscall(frame: *arch.interrupts.ReducedFrame) !void {

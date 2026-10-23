@@ -46,6 +46,7 @@ pub const CpuContext = struct {
     interrupts_context: arch.interrupts.InterruptsContext = undefined,
     phys_context: mem.phys.PhysContext = undefined,
     sched_context: sched.SchedContext = undefined,
+    timer_context: drivers.timer.TimerContext = undefined,
 
     /// Return `null` if CpuContexts are not initialized.
     pub inline fn current() ?*CpuContext {
@@ -70,6 +71,7 @@ pub const CpuContext = struct {
         try cpu_context.interrupts_context.init();
         try cpu_context.phys_context.init();
         try cpu_context.sched_context.init();
+        try cpu_context.timer_context.init();
 
         return cpu_context;
     }
@@ -78,6 +80,7 @@ pub const CpuContext = struct {
         self.interrupts_context.updateHhdm();
         self.phys_context.updateHhdm();
         self.sched_context.updateHhdm();
+        self.timer_context.updateHhdm();
     }
 };
 
