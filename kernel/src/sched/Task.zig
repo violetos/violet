@@ -27,6 +27,9 @@ const utils = mem.utils;
 
 const sched = kernel.sched;
 
+const Process = sched.Process;
+const Future = sched.Future;
+
 // --- sched/Task.zig --- //
 
 const Task = @This();
@@ -34,9 +37,27 @@ const Map = utils.SlotMap(utils.Arc(Task));
 var map: Map = .{};
 pub const Id = Map.Handle;
 pub const Ref = Map.ArcRef;
+pub const New = Map.New;
 
 // --- //
 
-process: sched.Process.Ref,
+process: Process.Ref,
 
 interrupt_data: arch.interrupts.InterruptData,
+
+lock: mem.utils.RwLock,
+future_last: ?Future.Ref,
+future_next: ?Future.Ref,
+
+/// Protected by Process.lock
+task_last: ?Task.Ref,
+/// Protected by Process.lock
+task_next: ?Task.Ref,
+
+pub fn create(item: Task) !Task.New {
+    return try map.insert(item);
+}
+
+pub fn get(id: Task.Id) ?Task.Ref {
+    return map.get(id);
+}

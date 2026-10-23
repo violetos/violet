@@ -22,6 +22,10 @@ const kernel = @import("root");
 
 const mem = kernel.mem;
 const utils = mem.utils;
+const sched = kernel.sched;
+
+const Future = sched.Future;
+const Task = sched.Task;
 
 // --- sched/Process.zig --- //
 
@@ -33,7 +37,12 @@ pub const Ref = Map.ArcRef;
 
 // --- //
 
+space: ?mem.virt.Space,
+
+lock: mem.utils.RwLock,
+task_head: ?Task.Ref,
+future_head: ?Future.Ref,
+
 pub fn isPrivileged(self: *const Process) bool {
-    _ = self;
-    return true;
+    return self.space == null;
 }

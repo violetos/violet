@@ -16,6 +16,7 @@
 
 const std = @import("std");
 const basalt = @import("basalt");
+const build_options = @import("build_options");
 
 // --- imports --- //
 

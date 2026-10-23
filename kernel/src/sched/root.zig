@@ -20,8 +20,11 @@ const std = @import("std");
 
 const kernel = @import("root");
 
+const mem = kernel.mem;
+
 // --- exports --- //
 
+pub const Future = @import("Future.zig");
 pub const Process = @import("Process.zig");
 pub const Task = @import("Task.zig");
 
@@ -29,6 +32,10 @@ pub const Task = @import("Task.zig");
 
 pub const SchedContext = struct {
     current_task: ?Task.Ref,
+
+    /// protect run_queue.
+    run_lock: mem.utils.RwLock,
+    run_queue: mem.utils.BinaryHeap(Task.Ref, .min, true),
 
     pub fn init(self: *SchedContext) !void {
         self.current_task = null;
