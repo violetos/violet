@@ -44,7 +44,7 @@ pub fn build(b: *std.Build) !void {
             if (board) |bo|
                 try concat(b, bo.getSoC().getDrivers(), bo.getDrivers())
             else switch (arch) {
-                .aarch64 => "uart_pl011,gicv2,arm_generic",
+                .aarch64 => "uart_pl011,gicv3,arm_generic",
                 .riscv64 => "uart_ns16550a",
                 else => "",
             };
@@ -276,7 +276,7 @@ fn runCmd(b: *std.Build, arch: Arch, violet_img: std.Build.LazyPath) *std.Build.
     {
         switch (arch) {
             .aarch64 => run_cmd.addArgs(&.{
-                "-machine", "virt,gic-version=2,secure=off,virtualization=on,pflash0=pflash0,pflash1=pflash1",
+                "-machine", "virt,gic-version=3,secure=off,virtualization=off,pflash0=pflash0,pflash1=pflash1",
                 "-cpu",     "max",
             }),
             .riscv64 => run_cmd.addArgs(&.{
