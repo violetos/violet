@@ -38,6 +38,7 @@ pub fn build(b: *std.Build) !void {
         const page_size = b.option(u64, "page_size", "4, 16, 64") orelse 4;
         const page_levels = b.option(u8, "page_levels", "3, 4, 5") orelse 4;
 
+        build_options.addOption(std.SemanticVersion, "semver", try std.SemanticVersion.parse(zon.version));
         build_options.addOption([]const u8, "version", zon.version);
         build_options.addOption([]const u8, "drivers", drivers);
         build_options.addOption(u64, "page_size", page_size);

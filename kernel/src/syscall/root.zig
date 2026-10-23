@@ -28,6 +28,9 @@ const arch = kernel.arch;
 pub var kit: basalt.system.call.KernelIndirectionTable = undefined;
 
 pub fn init() !void {
+    kit.major_version = @intCast(build_options.semver.major);
+    kit.minor_version = @intCast(build_options.semver.minor);
+
     @memset(&registers, 0);
     register(.null, &null_syscall);
     basalt.system.call.kit = &kit;
