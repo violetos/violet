@@ -42,6 +42,26 @@ To instantly build and boot the OS in a virtual machine, simply type:
 zig build run -Darch=<ARCH>
 ```
 
+## Install
+
+violetOS is in early development ; there is no usable software yet.
+
+### Raspberry Pi4
+
+First download latest/raspberry_pi4.img.xz (unavailable) or [nightly/raspberry_pi4.img.xz](https://repo.violetos.org/nightly/violet-raspberry_pi4.img.xz).
+
+If you use [Rufus](https://rufus.ie) or [Balena Etcher](https://etcher.balena.io) it should directly accept the compressed image. If you use another tool, you may need to uncompress it first.
+
+*Since, the SD driver of the RPi4 is slower than the USB driver, we recommend using an USB device instead of the SD card to run violetOS, it avoids a lot of potential issues and make boot and usage significantly more fast and stable.*
+
+### Apple Silicon
+
+To install violetOS on an Apple Silicon device (with M1/M2/M3 SoC), you can use the dedicated install script:
+
+```sh
+curl -sL https://repo.violetos.org/alx/install.sh | EXPERT=1 sh
+```
+
 ## License
 
 Distributed under the [Apache License, Version 2.0](https://www.apache.org/licenses/LICENSE-2.0). See [LICENSE](LICENSE) and [NOTICE.md](NOTICE.md) for more information.
