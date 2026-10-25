@@ -14,7 +14,6 @@
 
 // --- dependencies -- //
 
-const basalt = @import("basalt");
 const std = @import("std");
 
 // --- imports --- //
@@ -23,9 +22,11 @@ const kernel = @import("root");
 
 const mem = kernel.mem;
 const paging = mem.paging;
-const phys = mem.phys;
 const utils = mem.utils;
 const virt = mem.virt;
+
+const OwnedObject = virt.OwnedObject;
+const PinState = OwnedObject.PinState;
 
 // --- mem/virt/SharedObject.zig --- //
 
@@ -35,41 +36,90 @@ const Map = utils.SlotMap(utils.Arc(SharedObject));
 
 pub const Id = Map.Handle;
 pub const Ref = Map.ArcRef;
+pub const New = Map.New;
 
 pub var map: Map = .{};
 
-id: Id,
-object: virt.OwnedObject.Ref,
+id: Id = .null,
+object: OwnedObject.Ref,
 permissions: paging.Permissions,
+max_permissions: paging.Permissions,
+pin_state: PinState = .{},
 
-// Protected by OwnedObject.lock.
-next_shared: ?Ref = null,
-last_shared: ?Ref = null,
+/// Creates a new `SharedObject` handle over `owned_ref` (consumes `owned_ref`) with attenuated permissions.
+pub fn create(owned_ref: OwnedObject.Ref, permissions: paging.Permissions) !New {
+    var obj_ref = owned_ref;
+    errdefer obj_ref.release();
+
+    if (permissions.writable and permissions.executable) {
+        return virt.Space.Error.WriteXorExecute;
+    }
+
+    const owned = obj_ref.payload();
+    const base_perms = owned.permissions;
+
+    // A shared capability can never escalate permissions beyond its backing OwnedObject.
+    if ((permissions.writable and !base_perms.writable) or
+        (permissions.executable and !base_perms.executable))
+    {
+        return virt.Space.Error.PermissionDenied;
+    }
+
+    _ = owned.shared_count.fetchAdd(1, .acquire);
+    errdefer _ = owned.shared_count.fetchSub(1, .release);
+
+    const id, const ref = try map.insert(.{
+        .object = obj_ref,
+        .permissions = permissions,
+        .max_permissions = permissions,
+    });
+    ref.payload().id = id;
+    return .{ id, ref };
+}
+
+pub inline fn pin(self: *SharedObject) !void {
+    try self.pin_state.pin();
+    errdefer self.pin_state.unpin();
+    try self.object.payload().pin();
+}
+
+pub inline fn unpin(self: *SharedObject) void {
+    self.object.payload().unpin();
+    self.pin_state.unpin();
+}
+
+pub inline fn isPinned(self: *const SharedObject) bool {
+    return self.pin_state.isPinned() or self.object.payload().isPinned();
+}
+
+/// Updates permissions on this `SharedObject` within `max_permissions`. Fails if pinned.
+pub fn setPermissions(self: *SharedObject, new_perms: paging.Permissions) !void {
+    if (new_perms.writable and new_perms.executable) return virt.Space.Error.WriteXorExecute;
+    if ((new_perms.writable and !self.max_permissions.writable) or
+        (new_perms.executable and !self.max_permissions.executable) or
+        (new_perms.user and !self.max_permissions.user))
+    {
+        return virt.Space.Error.PermissionDenied;
+    }
+    if (self.object.payload().isPinned()) return virt.Space.Error.PinnedObject;
+
+    try self.pin_state.beginExclusive();
+    defer self.pin_state.endExclusive();
+
+    self.permissions = new_perms;
+}
+
+pub fn SlotMap_deinit(self: *SharedObject) void {
+    std.debug.assert(!self.pin_state.isPinned());
+    const owned = self.object.payload();
+    _ = owned.shared_count.fetchSub(1, .release);
+    self.object.release();
+}
 
 pub fn destroy(self: *SharedObject) void {
-    var obj_ref = self.object;
-    defer obj_ref.release();
+    _ = self;
+}
 
-    const owned_object: *virt.OwnedObject = obj_ref.payload();
-
-    const int_state = owned_object.lock.acquire(.write, 0);
-    defer owned_object.lock.release(.write, int_state);
-
-    if (self.next_shared) |*next| {
-        const next_shared: *virt.SharedObject = next.payload();
-        next_shared.last_shared.?.release(); // self
-        next_shared.last_shared = self.last_shared;
-    }
-
-    if (self.last_shared) |*last| {
-        const last_shared: *virt.SharedObject = last.payload();
-        last_shared.next_shared.?.release(); // self
-        last_shared.next_shared = self.next_shared;
-    } else {
-        owned_object.shared_head.?.release(); // self
-        owned_object.shared_head = self.next_shared;
-    }
-
-    self.last_shared = null;
-    self.next_shared = null;
+pub fn SlotMap_updateHhdm(self: *SharedObject) void {
+    self.object.updateHhdm();
 }

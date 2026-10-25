@@ -31,10 +31,12 @@ const utils = mem.utils;
 pub const OwnedObject = @import("OwnedObject.zig");
 pub const SharedObject = @import("SharedObject.zig");
 pub const Space = @import("Space.zig");
+pub const View = @import("View.zig");
 
 // --- mem/virt.zig --- //
 
 pub var kernel_space: Space.Ref = undefined;
+pub var kernel_view: View.Ref = undefined;
 pub var kernel_pagetable: u64 = undefined;
 pub var kernel_start_pa: u64 = undefined;
 
@@ -48,30 +50,33 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
     }
 
     {
-        _, const ref = try Space.map.insert(try Space.init(.high));
-        kernel_space = ref;
+        _, const space_ref = try Space.map.insert(try Space.init(.high));
+        kernel_space = space_ref;
+
+        _, const view_ref = try View.create(kernel_space.clone());
+        kernel_view = view_ref;
     }
 
     const physical_base: u64 = address_request.response.?.physical_base;
-    const space: *Space = kernel_space.payload();
+    const k_view: *View = kernel_view.payload();
 
     kernel_start_pa = physical_base;
 
-    try map(space, KernelMemory.rodataRange(), physical_base, .{
+    try mapKernelRange(k_view, KernelMemory.rodataRange(), physical_base, .{
         .writable = false,
         .executable = false,
         .user = false,
         .global = true,
     });
 
-    try map(space, KernelMemory.textRange(), physical_base, .{
+    try mapKernelRange(k_view, KernelMemory.textRange(), physical_base, .{
         .writable = false,
         .executable = true,
         .user = false,
         .global = true,
     });
 
-    try map(space, KernelMemory.dataRange(), physical_base, .{
+    try mapKernelRange(k_view, KernelMemory.dataRange(), physical_base, .{
         .writable = true,
         .executable = false,
         .user = false,
@@ -111,10 +116,11 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
                 .user = false,
                 .writable = true,
             },
+            .owns_physical = false,
             .physical_mapping = .{ .contiguous = 0 },
         });
 
-        break :blk try space.alloc(aligned_size, .{ .owned = ref }, false, 0);
+        break :blk try k_view.alloc(aligned_size, .{ .owned = ref }, false, 0);
     };
 
     kernel_pagetable = kernel_space.payload().page_table.root_pa;
@@ -130,8 +136,11 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
         mem.hhdm_offset = new_hhdm_offset;
 
         Space.map.updateHhdm();
+        View.map.updateHhdm();
         OwnedObject.map.updateHhdm();
+        SharedObject.map.updateHhdm();
         kernel_space.updateHhdm();
+        kernel_view.updateHhdm();
 
         kernel.cpu.updateHhdm();
         mem.phys.updateHhdm();
@@ -143,22 +152,16 @@ pub fn init(memmap_entries: []*limine.MemoryMapEntry) !void {
     );
 }
 
-inline fn map(space: *Space, range: KernelMemory.Range, physical_base: u64, permissions: paging.Permissions) !void {
+inline fn mapKernelRange(view: *View, range: KernelMemory.Range, physical_base: u64, permissions: paging.Permissions) !void {
     _, const ref = try OwnedObject.map.insert(OwnedObject{
         .length = range.pages(),
         .mem_type = .writeback,
         .permissions = permissions,
+        .owns_physical = false,
         .physical_mapping = .{ .contiguous = range.offset(physical_base) },
     });
 
-    try space.mapAt(.{
-        .base_va = range.start,
-        .end_va = range.end,
-        .kind = .{ .owned = .{
-            .ref = ref,
-            .has_guards = false,
-        } },
-    });
+    try view.mapAt(range.start, range.end, .{ .owned = ref }, false);
 }
 
 // --- //
@@ -216,27 +219,5 @@ pub const KernelMemory = struct {
 };
 
 pub fn mmio(base: u64, size: u64) !u64 {
-    const k_space = kernel_space.payload();
-
-    const base_aligned = std.mem.alignBackward(u64, base, paging.page_size);
-    const offset = base - base_aligned;
-
-    const total_size = size + offset;
-    const aligned_size = std.mem.alignForward(u64, total_size, paging.page_size);
-
-    _, var ref = try OwnedObject.map.insert(.{
-        .length = aligned_size / paging.page_size,
-        .mem_type = .device,
-        .permissions = .{
-            .executable = false,
-            .global = true,
-            .user = false,
-            .writable = true,
-        },
-        .physical_mapping = .{ .contiguous = base_aligned },
-    });
-    errdefer ref.release();
-
-    const va_base = try k_space.alloc(aligned_size, .{ .owned = ref }, false, 0);
-    return va_base + offset;
+    return kernel_view.payload().mmio(base, size);
 }

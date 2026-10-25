@@ -26,6 +26,10 @@ const phys = mem.phys;
 const utils = mem.utils;
 const virt = mem.virt;
 
+const OwnedObject = virt.OwnedObject;
+const SharedObject = virt.SharedObject;
+const PinState = OwnedObject.PinState;
+
 // --- mem/virt/Space.zig --- //
 
 const Space = @This();
@@ -45,6 +49,10 @@ pub const Error = error{
     OutOfMemory,
     ProtectedRegion,
     InvalidArgs,
+    PermissionDenied,
+    PinnedObject,
+    WriteXorExecute,
+    ViewClosed,
 };
 
 pub const Half = enum {
@@ -53,7 +61,7 @@ pub const Half = enum {
 
     pub inline fn minVa(self: Half) u64 {
         return switch (self) {
-            .low => 0,
+            .low => 64 * 1024, // Never auto-allocate the null page
             .high => kernel.arch.paging.high_half_min,
         };
     }
@@ -68,7 +76,11 @@ pub const Half = enum {
     pub fn contains(self: Half, base_va: u64, end_va: u64) bool {
         if (end_va <= base_va) return false;
         const end_inclusive = end_va - 1;
-        return base_va >= self.minVa() and end_inclusive <= self.maxVa();
+        const min_allowed: u64 = switch (self) {
+            .low => 0,
+            .high => kernel.arch.paging.high_half_min,
+        };
+        return base_va >= min_allowed and end_inclusive <= self.maxVa();
     }
 };
 
@@ -76,6 +88,8 @@ half: Half,
 lock: utils.RwLock,
 page_table: paging.PageTable,
 first_node: ?*Node,
+/// Lowest potentially unallocated VA >= `half.minVa()` to avoid $O(N)$ scans from the start of the space.
+free_hint_va: u64,
 
 pub fn init(half: Half) !Space {
     return .{
@@ -83,6 +97,7 @@ pub fn init(half: Half) !Space {
         .lock = .{},
         .page_table = try .init(null),
         .first_node = null,
+        .free_hint_va = half.minVa(),
     };
 }
 
@@ -98,30 +113,37 @@ pub fn SlotMap_deinit(self: *Space) void {
     self.first_node = null;
 }
 
-pub fn get(self: *Space, va: u64) ?*Region {
-    if (va < self.half.minVa() or va > self.half.maxVa()) return null;
+pub const RegionSnapshot = struct {
+    base_va: u64,
+    end_va: u64,
+    owner: virt.View.Id,
+    has_guards: bool,
+    permissions: paging.Permissions,
+    pinned: bool,
+};
+
+pub fn get(self: *Space, va: u64) ?RegionSnapshot {
+    if (va > self.half.maxVa()) return null;
 
     const int_state = self.lock.acquire(.read, 0);
     defer self.lock.release(.read, int_state);
 
-    var current = self.first_node;
-    while (current) |node| {
-        if (node.len > 0) {
-            const first_va = node.regions[0].base_va;
-            const last_va = node.regions[node.len - 1].end_va;
-
-            if (va < first_va) return null;
-            if (va < last_va) {
-                if (node.get(va)) |reg| return reg;
-                return null;
-            }
-        }
-        current = node.next;
-    }
-    return null;
+    const reg = self.findRegionLocked(va) orelse return null;
+    return reg.snapshot();
 }
 
-fn releaseTarget(target: RegionTarget) void {
+pub fn getForView(self: *Space, owner: virt.View.Id, va: u64) ?RegionSnapshot {
+    if (va > self.half.maxVa()) return null;
+
+    const int_state = self.lock.acquire(.read, 0);
+    defer self.lock.release(.read, int_state);
+
+    const reg = self.findRegionLocked(va) orelse return null;
+    if (!reg.owner.eql(owner)) return null;
+    return reg.snapshot();
+}
+
+pub fn releaseTarget(target: RegionTarget) void {
     switch (target) {
         .owned => |ref| {
             var r = ref;
@@ -135,171 +157,378 @@ fn releaseTarget(target: RegionTarget) void {
     }
 }
 
-pub fn alloc(self: *Space, size: u64, target: RegionTarget, with_guards: bool, min_va: u64) !u64 {
-    if (size == 0 or size % paging.page_size != 0) return Error.InvalidRange;
+fn validateTargetAndPerms(target: RegionTarget, with_guards: bool) !paging.Permissions {
     if (with_guards and target == .guard) return Error.InvalidArgs;
 
+    return switch (target) {
+        .guard => .{
+            .writable = false,
+            .executable = false,
+            .user = false,
+            .global = false,
+        },
+        .owned => |ref| blk: {
+            const perms = ref.payload().permissions;
+            if (perms.writable and perms.executable) return Error.WriteXorExecute;
+            break :blk perms;
+        },
+        .shared => |ref| blk: {
+            const shared = ref.payload();
+            const perms = shared.permissions;
+            const owner_perms = shared.object.payload().permissions;
+            if (perms.writable and perms.executable) return Error.WriteXorExecute;
+            if ((perms.writable and !owner_perms.writable) or
+                (perms.executable and !owner_perms.executable))
+            {
+                return Error.PermissionDenied;
+            }
+            break :blk perms;
+        },
+    };
+}
+
+pub fn allocForView(
+    self: *Space,
+    owner: virt.View.Id,
+    size: u64,
+    target: RegionTarget,
+    with_guards: bool,
+    min_va: u64,
+) !u64 {
     errdefer releaseTarget(target);
 
-    const total_size = if (with_guards) size + (2 * paging.page_size) else size;
+    if (owner.isNull()) return Error.InvalidArgs;
+    if (size == 0 or size % paging.page_size != 0) return Error.InvalidRange;
+
+    const perms = try validateTargetAndPerms(target, with_guards);
+    const guard_overhead: u64 = if (with_guards) 2 * paging.page_size else 0;
+    const total_size = std.math.add(u64, size, guard_overhead) catch return Error.InvalidRange;
 
     const int_state = self.lock.acquire(.write, 0);
     defer self.lock.release(.write, int_state);
 
-    const base_va = self.findFreeSpaceLocked(total_size, min_va) orelse return Error.OutOfMemory;
+    const reserved_base = self.findFreeSpaceLocked(total_size, min_va) orelse return Error.OutOfMemory;
+    const payload_start = if (with_guards) reserved_base + paging.page_size else reserved_base;
+    const payload_end = payload_start + size;
 
-    if (with_guards) {
-        const guard1_start = base_va;
-        const main_start = base_va + paging.page_size;
-        const main_end = main_start + size;
-        const guard2_end = main_end + paging.page_size;
+    const kind: Region.Kind = switch (target) {
+        .owned => |ref| .{ .owned = .{ .ref = ref, .has_guards = with_guards } },
+        .shared => |ref| .{ .shared = .{ .ref = ref, .has_guards = with_guards } },
+        .guard => .guard,
+    };
 
-        const main_kind: Region.Kind = switch (target) {
-            .owned => |ref| .{ .owned = .{ .ref = ref, .has_guards = true } },
-            .shared => |ref| .{ .shared = .{ .ref = ref, .has_guards = true } },
-            .guard => @panic("main_kind.guard"),
-        };
+    const region = Region{
+        .base_va = payload_start,
+        .end_va = payload_end,
+        .owner = owner,
+        .has_guards = with_guards,
+        .permissions = perms,
+        .kind = kind,
+    };
 
-        const guard1 = Region{ .base_va = guard1_start, .end_va = main_start, .kind = .linked_guard };
-        const main_region = Region{ .base_va = main_start, .end_va = main_end, .kind = main_kind };
-        const guard2 = Region{ .base_va = main_end, .end_va = guard2_end, .kind = .linked_guard };
+    const inserted = try self.insertLocked(region);
+    errdefer _ = self.removeEntryLocked(payload_start);
 
-        _ = try self.insertLocked(guard1);
-        errdefer self.removeLocked(guard1_start) catch @panic("removedLocked2");
-        try guard1.submitMapping(&self.page_table);
-        errdefer guard1.unmapRegion(&self.page_table) catch @panic("unmapRegion1");
+    try inserted.submitMapping(&self.page_table);
 
-        _ = try self.insertLocked(main_region);
-        errdefer self.removeLocked(main_start) catch @panic("removedLocked3");
-        try main_region.submitMapping(&self.page_table);
-        errdefer main_region.unmapRegion(&self.page_table) catch @panic("unmapRegion2");
-
-        _ = try self.insertLocked(guard2);
-        errdefer self.removeLocked(main_end) catch @panic("removedLocked4");
-        try guard2.submitMapping(&self.page_table);
-
-        return main_start;
-    } else {
-        const kind: Region.Kind = switch (target) {
-            .owned => |ref| .{ .owned = .{ .ref = ref, .has_guards = false } },
-            .shared => |ref| .{ .shared = .{ .ref = ref, .has_guards = false } },
-            .guard => .guard,
-        };
-
-        const region = Region{ .base_va = base_va, .end_va = base_va + size, .kind = kind };
-
-        _ = try self.insertLocked(region);
-        errdefer self.removeLocked(base_va) catch @panic("removedLocked1");
-        try region.submitMapping(&self.page_table);
-
-        return base_va;
+    if (reserved_base == self.free_hint_va) {
+        self.free_hint_va = inserted.reservedEnd();
     }
+
+    return payload_start;
 }
 
-pub fn mapAt(self: *Space, region: Region) !void {
+pub fn mapAtForView(
+    self: *Space,
+    owner: virt.View.Id,
+    base_va: u64,
+    end_va: u64,
+    target: RegionTarget,
+    with_guards: bool,
+) !void {
+    errdefer releaseTarget(target);
+
+    if (owner.isNull()) return Error.InvalidArgs;
+    if (end_va <= base_va) return Error.InvalidRange;
+    if (base_va % paging.page_size != 0 or end_va % paging.page_size != 0) return Error.InvalidRange;
+
+    const perms = try validateTargetAndPerms(target, with_guards);
+
+    const kind: Region.Kind = switch (target) {
+        .owned => |ref| .{ .owned = .{ .ref = ref, .has_guards = with_guards } },
+        .shared => |ref| .{ .shared = .{ .ref = ref, .has_guards = with_guards } },
+        .guard => .guard,
+    };
+
+    const region = Region{
+        .base_va = base_va,
+        .end_va = end_va,
+        .owner = owner,
+        .has_guards = with_guards,
+        .permissions = perms,
+        .kind = kind,
+    };
+
     const int_state = self.lock.acquire(.write, 0);
     defer self.lock.release(.write, int_state);
-    var reg = try self.insertLocked(region);
-    errdefer self.removeLocked(region.base_va) catch @panic("removedLock5");
-    try reg.submitMapping(&self.page_table);
+
+    const inserted = try self.insertLocked(region);
+    errdefer _ = self.removeEntryLocked(base_va);
+
+    try inserted.submitMapping(&self.page_table);
 }
 
-pub fn remove(self: *Space, base_va: u64) !void {
+pub fn removeForView(self: *Space, owner: virt.View.Id, base_va: u64) !void {
     const int_state = self.lock.acquire(.write, 0);
     defer self.lock.release(.write, int_state);
 
-    var target_region: Region = undefined;
-    var found = false;
+    const reg_ptr = self.findRegionByBaseLocked(base_va) orelse return Error.NotFound;
 
-    var current = self.first_node;
-    while (current) |node| {
-        if (node.len > 0 and base_va >= node.regions[0].base_va and base_va <= node.regions[node.len - 1].base_va) {
-            if (node.get(base_va)) |reg| {
-                if (reg.base_va == base_va) {
-                    target_region = reg.*;
-                    found = true;
-                    break;
+    if (!reg_ptr.owner.eql(owner)) return Error.PermissionDenied;
+    if (reg_ptr.isPinned()) return Error.PinnedObject;
+
+    try reg_ptr.pin_state.beginExclusive();
+
+    reg_ptr.unmapRegion(&self.page_table) catch |err| {
+        reg_ptr.pin_state.endExclusive();
+        return err;
+    };
+
+    const reserved_start = reg_ptr.reservedStart();
+    if (reserved_start < self.free_hint_va and reserved_start >= self.half.minVa()) {
+        self.free_hint_va = reserved_start;
+    }
+
+    var removed = self.removeEntryLocked(base_va) orelse unreachable;
+    removed.releaseResources(false);
+}
+
+pub fn protectForView(self: *Space, owner: virt.View.Id, base_va: u64, new_perms: paging.Permissions) !void {
+    if (new_perms.writable and new_perms.executable) return Error.WriteXorExecute;
+
+    const int_state = self.lock.acquire(.write, 0);
+    defer self.lock.release(.write, int_state);
+
+    const reg_ptr = self.findRegionByBaseLocked(base_va) orelse return Error.NotFound;
+
+    if (!reg_ptr.owner.eql(owner)) return Error.PermissionDenied;
+    if (reg_ptr.kind == .guard) return Error.ProtectedRegion;
+    if (reg_ptr.isPinned()) return Error.PinnedObject;
+
+    switch (reg_ptr.kind) {
+        .owned => |*o| {
+            const obj = o.ref.payload();
+            if (obj.isPinned()) return Error.PinnedObject;
+        },
+        .shared => |*s| {
+            const shared = s.ref.payload();
+            if (shared.isPinned()) return Error.PinnedObject;
+            const max_p = shared.permissions;
+            if ((new_perms.writable and !max_p.writable) or
+                (new_perms.executable and !max_p.executable) or
+                (new_perms.user and !max_p.user))
+            {
+                return Error.PermissionDenied;
+            }
+        },
+        .guard => unreachable,
+    }
+
+    try reg_ptr.pin_state.beginExclusive();
+    defer reg_ptr.pin_state.endExclusive();
+
+    const old_perms = reg_ptr.permissions;
+    reg_ptr.permissions = new_perms;
+    errdefer reg_ptr.permissions = old_perms;
+
+    try reg_ptr.submitMapping(&self.page_table);
+}
+
+pub fn removeAllForView(self: *Space, owner: virt.View.Id, force: bool) !void {
+    const int_state = self.lock.acquire(.write, 0);
+    defer self.lock.release(.write, int_state);
+
+    if (!force) {
+        var scan = self.first_node;
+        while (scan) |node| : (scan = node.next) {
+            for (node.regions[0..node.len]) |*reg| {
+                if (reg.owner.eql(owner) and reg.isPinned()) {
+                    return Error.PinnedObject;
                 }
             }
         }
-        current = node.next;
     }
 
-    if (!found) return Error.NotFound;
+    var prev: ?*Node = null;
+    var current = self.first_node;
 
-    const has_guards = switch (target_region.kind) {
-        .linked_guard => return Error.ProtectedRegion,
-        .owned => |o| o.has_guards,
-        .shared => |s| s.has_guards,
-        else => false,
-    };
+    while (current) |node| {
+        var write_idx: usize = 0;
 
-    const unmap_start = if (has_guards) target_region.base_va - paging.page_size else target_region.base_va;
-    const unmap_end = if (has_guards) target_region.end_va + paging.page_size else target_region.end_va;
-    const batch_size = (unmap_end - unmap_start) / paging.page_size;
+        for (0..node.len) |read_idx| {
+            var reg = &node.regions[read_idx];
+            if (reg.owner.eql(owner)) {
+                const r_start = reg.reservedStart();
+                if (r_start < self.free_hint_va and r_start >= self.half.minVa()) {
+                    self.free_hint_va = r_start;
+                }
 
-    const kind_ref: union(enum) { none, owned: virt.OwnedObject.Ref, shared: virt.SharedObject.Ref } = switch (target_region.kind) {
-        .linked_guard => return Error.ProtectedRegion,
-        .owned => |o| .{ .owned = o.ref },
-        .shared => |s| .{ .shared = s.ref },
-        else => .none,
-    };
+                reg.unmapRegion(&self.page_table) catch {};
+                reg.releaseResources(false);
+            } else {
+                if (write_idx != read_idx) {
+                    node.regions[write_idx] = reg.*;
+                }
+                write_idx += 1;
+            }
+        }
 
-    var query = paging.Query{
-        .virtual_address = unmap_start,
-        .physical_address = null,
-        .batch_size = @intCast(batch_size),
-        .state = .unmapped,
-        .permissions = null,
-        .mem_type = null,
-        .level = null,
-    };
-    try self.page_table.submit(&query);
+        node.len = write_idx;
 
-    if (has_guards) {
-        self.removeLocked(target_region.base_va) catch @panic("removedLock6");
-        self.removeLocked(target_region.base_va - paging.page_size) catch @panic("removedLock7");
-        self.removeLocked(target_region.end_va) catch @panic("removedLock8");
-    } else {
-        self.removeLocked(target_region.base_va) catch @panic("removedLock9");
-    }
-
-    switch (kind_ref) {
-        .owned => |ref| {
-            ref.release();
-        },
-        .shared => |ref| {
-            ref.release();
-        },
-        .none => {},
+        if (node.len == 0) {
+            const next = node.next;
+            if (prev) |p| {
+                p.next = next;
+            } else {
+                self.first_node = next;
+            }
+            node.destroyEmpty();
+            current = next;
+        } else {
+            node.updateBounds();
+            if (prev) |p| {
+                if (p.tryMergeWithNext()) {
+                    current = p.next;
+                    continue;
+                }
+            }
+            prev = node;
+            current = node.next;
+        }
     }
 }
 
-fn findFreeSpaceLocked(self: *Space, size: u64, min_va: u64) ?u64 {
+pub fn pinRangeForView(
+    self: *Space,
+    owner: virt.View.Id,
+    va: u64,
+    size: u64,
+    required_perms: paging.Permissions,
+) !void {
+    if (size == 0) return Error.InvalidRange;
+    const start_va = std.mem.alignBackward(u64, va, paging.page_size);
+    const end_raw = std.math.add(u64, va, size) catch return Error.InvalidRange;
+    const end_va = std.mem.alignForward(u64, end_raw, paging.page_size);
+
+    const int_state = self.lock.acquire(.read, 0);
+    defer self.lock.release(.read, int_state);
+
+    var cursor = start_va;
+    while (cursor < end_va) {
+        const reg = self.findRegionLocked(cursor) orelse return Error.NotFound;
+        if (reg.owner != owner) return Error.PermissionDenied;
+        if (reg.kind == .guard) return Error.ProtectedRegion;
+        if (!reg.satisfiesPermissions(required_perms)) return Error.PermissionDenied;
+        cursor = reg.end_va;
+    }
+
+    cursor = start_va;
+    errdefer self.unpinRangeUpToLocked(start_va, cursor);
+
+    while (cursor < end_va) {
+        const reg = self.findRegionLocked(cursor).?;
+        try reg.pin();
+        cursor = reg.end_va;
+    }
+}
+
+pub fn unpinRangeForView(self: *Space, owner: virt.View.Id, va: u64, size: u64) void {
+    if (size == 0) return;
+    const start_va = std.mem.alignBackward(u64, va, paging.page_size);
+    const end_raw = std.math.add(u64, va, size) catch return;
+    const end_va = std.mem.alignForward(u64, end_raw, paging.page_size);
+
+    const int_state = self.lock.acquire(.read, 0);
+    defer self.lock.release(.read, int_state);
+
+    var cursor = start_va;
+    while (cursor < end_va) {
+        const reg = self.findRegionLocked(cursor) orelse break;
+        if (reg.owner.eql(owner)) {
+            reg.unpin();
+        }
+        cursor = reg.end_va;
+    }
+}
+
+fn unpinRangeUpToLocked(self: *Space, start_va: u64, stop_va: u64) void {
+    var cursor = start_va;
+    while (cursor < stop_va) {
+        const reg = self.findRegionLocked(cursor) orelse break;
+        reg.unpin();
+        cursor = reg.end_va;
+    }
+}
+
+fn findRegionLocked(self: *const Space, va: u64) ?*Region {
+    var current = self.first_node;
+    while (current) |node| : (current = node.next) {
+        if (node.len == 0) continue;
+        if (va < node.min_va) return null;
+        if (va < node.max_va) {
+            return node.getPayload(va);
+        }
+    }
+    return null;
+}
+
+fn findRegionByBaseLocked(self: *const Space, base_va: u64) ?*Region {
+    var current = self.first_node;
+    while (current) |node| : (current = node.next) {
+        if (node.len == 0) continue;
+        if (base_va < node.min_va) return null;
+        if (base_va < node.max_va) {
+            if (node.getPayload(base_va)) |reg| {
+                if (reg.base_va == base_va) return reg;
+            }
+            return null;
+        }
+    }
+    return null;
+}
+
+fn findFreeSpaceLocked(self: *Space, total_size: u64, min_va: u64) ?u64 {
     if (min_va > self.half.maxVa()) return null;
-    var current_va = std.mem.alignForward(u64, @max(min_va, self.half.minVa()), paging.page_size);
-    if (current_va == 0 and min_va > 0) return null;
+
+    const baseline = @max(min_va, self.half.minVa());
+    const start_hint = if (baseline <= self.free_hint_va) self.free_hint_va else baseline;
+    var current_va = std.mem.alignForward(u64, start_hint, paging.page_size);
+    if (current_va < baseline) return null; // Overflow during alignment
 
     var current = self.first_node;
-    while (current) |node| {
-        for (0..node.len) |i| {
-            const reg = &node.regions[i];
+    while (current) |node| : (current = node.next) {
+        if (node.len == 0 or node.max_va <= current_va) continue;
 
-            if (current_va + size <= reg.base_va) {
+        const start_idx = node.lowerBoundEnd(current_va);
+        for (start_idx..node.len) |i| {
+            const reg = &node.regions[i];
+            const reg_start = reg.reservedStart();
+            const reg_end = reg.reservedEnd();
+
+            const candidate_end = std.math.add(u64, current_va, total_size) catch return null;
+            if (candidate_end <= reg_start) {
                 return current_va;
             }
 
-            const next_va = std.mem.alignForward(u64, reg.end_va, paging.page_size);
-            if (next_va == 0) return null;
-
-            if (next_va > current_va) {
-                current_va = next_va;
+            if (reg_end > current_va) {
+                current_va = std.mem.alignForward(u64, reg_end, paging.page_size);
+                if (current_va < reg_end) return null; // Wrapped around u64::MAX
             }
         }
-        current = node.next;
     }
 
-    if (self.half.maxVa() - current_va >= size - 1) {
+    const final_end = std.math.add(u64, current_va, total_size - 1) catch return null;
+    if (final_end <= self.half.maxVa()) {
         return current_va;
     }
 
@@ -307,12 +536,17 @@ fn findFreeSpaceLocked(self: *Space, size: u64, min_va: u64) ?u64 {
 }
 
 fn insertLocked(self: *Space, region: Region) !*Region {
-    if (!self.half.contains(region.base_va, region.end_va)) return Error.OutOfBounds;
+    const r_start = region.reservedStart();
+    const r_end = region.reservedEnd();
+
+    if (r_start > region.base_va or r_end < region.end_va) return Error.OutOfBounds;
+    if (!self.half.contains(r_start, r_end)) return Error.OutOfBounds;
 
     if (self.first_node == null) {
         const node = try Node.create();
         node.regions[0] = region;
         node.len = 1;
+        node.updateBounds();
         self.first_node = node;
         return &node.regions[0];
     }
@@ -320,26 +554,23 @@ fn insertLocked(self: *Space, region: Region) !*Region {
     var prev: ?*Node = null;
     var current = self.first_node.?;
 
-    while (current.next != null and region.base_va >= current.regions[current.len - 1].end_va) {
+    while (current.next != null and r_start >= current.max_va) {
         prev = current;
         current = current.next.?;
     }
 
-    var idx: usize = 0;
-    while (idx < current.len and current.regions[idx].base_va < region.base_va) {
-        idx += 1;
-    }
+    const idx = current.lowerBoundStart(r_start);
 
     if (idx > 0) {
-        if (current.regions[idx - 1].end_va > region.base_va) return Error.Overlaps;
+        if (current.regions[idx - 1].reservedEnd() > r_start) return Error.Overlaps;
     } else if (prev) |p| {
-        if (p.regions[p.len - 1].end_va > region.base_va) return Error.Overlaps;
+        if (p.regions[p.len - 1].reservedEnd() > r_start) return Error.Overlaps;
     }
 
     if (idx < current.len) {
-        if (current.regions[idx].base_va < region.end_va) return Error.Overlaps;
+        if (current.regions[idx].reservedStart() < r_end) return Error.Overlaps;
     } else if (current.next) |n| {
-        if (n.regions[0].base_va < region.end_va) return Error.Overlaps;
+        if (n.regions[0].reservedStart() < r_end) return Error.Overlaps;
     }
 
     var target_node = current;
@@ -357,6 +588,9 @@ fn insertLocked(self: *Space, region: Region) !*Region {
         new_node.next = current.next;
         current.next = new_node;
 
+        current.updateBounds();
+        new_node.updateBounds();
+
         if (idx > mid) {
             target_node = new_node;
             target_idx = idx - mid;
@@ -370,47 +604,58 @@ fn insertLocked(self: *Space, region: Region) !*Region {
 
     target_node.regions[target_idx] = region;
     target_node.len += 1;
+    target_node.updateBounds();
+
     return &target_node.regions[target_idx];
 }
 
-fn removeLocked(self: *Space, base_va: u64) !void {
+fn removeEntryLocked(self: *Space, base_va: u64) ?Region {
     var prev: ?*Node = null;
     var current = self.first_node;
 
     while (current) |node| {
-        if (node.len > 0 and base_va >= node.regions[0].base_va and base_va <= node.regions[node.len - 1].base_va) {
-            for (0..node.len) |i| {
-                if (node.regions[i].base_va == base_va) {
-                    var j = i;
-                    while (j < node.len - 1) : (j += 1) {
-                        node.regions[j] = node.regions[j + 1];
-                    }
-                    node.len -= 1;
+        if (node.len > 0 and base_va >= node.min_va and base_va < node.max_va) {
+            if (node.findIndexByBase(base_va)) |i| {
+                const removed = node.regions[i];
 
-                    if (node.len == 0) {
-                        if (prev) |p| {
-                            p.next = node.next;
-                        } else {
-                            self.first_node = node.next;
-                        }
-                        node.destroy();
-                    }
-                    return;
+                var j = i;
+                while (j < node.len - 1) : (j += 1) {
+                    node.regions[j] = node.regions[j + 1];
                 }
+                node.len -= 1;
+
+                if (node.len == 0) {
+                    if (prev) |p| {
+                        p.next = node.next;
+                    } else {
+                        self.first_node = node.next;
+                    }
+                    node.destroyEmpty();
+                } else {
+                    node.updateBounds();
+                    _ = node.tryMergeWithNext();
+                    if (prev) |p| {
+                        _ = p.tryMergeWithNext();
+                    }
+                }
+                return removed;
             }
+            return null;
         }
         prev = current;
         current = node.next;
     }
-    return Error.NotFound;
+    return null;
 }
 
 const Node = struct {
-    const HEADER_SIZE = @sizeOf(?*Node) + @sizeOf(usize);
+    const HEADER_SIZE = @sizeOf(?*Node) + @sizeOf(usize) + (@sizeOf(u64) * 2);
     const CAPACITY = (paging.page_size - HEADER_SIZE) / @sizeOf(Region);
 
     next: ?*Node = null,
     len: usize = 0,
+    min_va: u64 = 0,
+    max_va: u64 = 0,
     regions: [CAPACITY]Region = undefined,
 
     pub fn create() !*Node {
@@ -418,29 +663,48 @@ const Node = struct {
         const node = mem.toHhdm(Node, pa);
         node.next = null;
         node.len = 0;
+        node.min_va = 0;
+        node.max_va = 0;
         return node;
     }
 
-    pub fn destroy(self: *Node) void {
-        for (self.regions[0..self.len]) |*region| {
-            switch (region.kind) {
-                .guard, .linked_guard => {},
-                .owned => |*ow| {
-                    ow.ref.payload().destroy();
-                    ow.ref.release();
-                },
-                .shared => |*sw| {
-                    sw.ref.payload().destroy();
-                    sw.ref.release();
-                },
-            }
+    pub inline fn updateBounds(self: *Node) void {
+        if (self.len == 0) {
+            self.min_va = 0;
+            self.max_va = 0;
+        } else {
+            self.min_va = self.regions[0].reservedStart();
+            self.max_va = self.regions[self.len - 1].reservedEnd();
         }
+    }
 
+    pub fn tryMergeWithNext(self: *Node) bool {
+        const next = self.next orelse return false;
+        if (self.len + next.len > CAPACITY / 2) return false;
+
+        @memcpy(self.regions[self.len .. self.len + next.len], next.regions[0..next.len]);
+        self.len += next.len;
+        self.next = next.next;
+        self.updateBounds();
+        next.destroyEmpty();
+        return true;
+    }
+
+    pub fn destroyEmpty(self: *Node) void {
+        std.debug.assert(self.len == 0);
         const pa = mem.fromHhdm(Node, self);
         phys.freePage(pa);
     }
 
-    pub fn get(self: *Node, va: u64) ?*Region {
+    pub fn destroy(self: *Node) void {
+        for (self.regions[0..self.len]) |*region| {
+            region.releaseResources(true);
+        }
+        self.len = 0;
+        self.destroyEmpty();
+    }
+
+    pub fn getPayload(self: *Node, va: u64) ?*Region {
         var left: usize = 0;
         var right: usize = self.len;
 
@@ -458,21 +722,74 @@ const Node = struct {
         }
         return null;
     }
+
+    pub fn findIndexByBase(self: *const Node, base_va: u64) ?usize {
+        var left: usize = 0;
+        var right: usize = self.len;
+
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            const reg_base = self.regions[mid].base_va;
+
+            if (base_va < reg_base) {
+                right = mid;
+            } else if (base_va > reg_base) {
+                left = mid + 1;
+            } else {
+                return mid;
+            }
+        }
+        return null;
+    }
+
+    /// First index `i` where `regions[i].reservedStart() >= target_start`.
+    pub fn lowerBoundStart(self: *const Node, target_start: u64) usize {
+        var left: usize = 0;
+        var right: usize = self.len;
+
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            if (self.regions[mid].reservedStart() < target_start) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        return left;
+    }
+
+    /// First index `i` where `regions[i].reservedEnd() > target_va`.
+    pub fn lowerBoundEnd(self: *const Node, target_va: u64) usize {
+        var left: usize = 0;
+        var right: usize = self.len;
+
+        while (left < right) {
+            const mid = left + (right - left) / 2;
+            if (self.regions[mid].reservedEnd() <= target_va) {
+                left = mid + 1;
+            } else {
+                right = mid;
+            }
+        }
+        return left;
+    }
 };
 
 pub const RegionTarget = union(enum) {
     guard,
-    owned: virt.OwnedObject.Ref,
-    shared: virt.SharedObject.Ref,
+    owned: OwnedObject.Ref,
+    shared: SharedObject.Ref,
 };
 
 pub fn SlotMap_updateHhdm(self: *Space) void {
     var current_ptr: *?*Node = &self.first_node;
     var current = self.first_node;
     while (current) |node| {
+        const next_old = node.next;
+
         for (node.regions[0..node.len]) |*region| {
             switch (region.kind) {
-                .guard, .linked_guard => {},
+                .guard => {},
                 .owned => |*ow| {
                     ow.ref.updateHhdm();
                 },
@@ -485,32 +802,128 @@ pub fn SlotMap_updateHhdm(self: *Space) void {
         current_ptr.* = mem.updatePtr(Node, node);
 
         current_ptr = &node.next;
-        current = node.next;
+        current = next_old;
     }
 }
 
 pub const Region = struct {
     base_va: u64,
     end_va: u64,
+    owner: virt.View.Id,
+    has_guards: bool = false,
+    permissions: paging.Permissions,
     kind: Kind,
-    pinned: std.atomic.Value(usize) = .init(0),
+    pin_state: PinState = .{},
 
     pub const Kind = union(enum) {
         guard,
-        linked_guard,
         owned: struct {
-            ref: virt.OwnedObject.Ref,
+            ref: OwnedObject.Ref,
             has_guards: bool,
         },
         shared: struct {
-            ref: virt.SharedObject.Ref,
+            ref: SharedObject.Ref,
             has_guards: bool,
         },
     };
 
-    pub fn submitMapping(self: *const Region, page_table: *paging.PageTable) !void {
+    pub inline fn reservedStart(self: *const Region) u64 {
+        return if (self.has_guards) self.base_va - paging.page_size else self.base_va;
+    }
+
+    pub inline fn reservedEnd(self: *const Region) u64 {
+        return if (self.has_guards) self.end_va + paging.page_size else self.end_va;
+    }
+
+    pub inline fn isPinned(self: *const Region) bool {
+        if (self.pin_state.isPinned()) return true;
+        return switch (self.kind) {
+            .guard => false,
+            .owned => |*o| o.ref.payload().isPinned(),
+            .shared => |*s| s.ref.payload().isPinned(),
+        };
+    }
+
+    pub inline fn pin(self: *Region) !void {
+        try self.pin_state.pin();
+        errdefer self.pin_state.unpin();
+
         switch (self.kind) {
-            .guard, .linked_guard => {
+            .guard => return Error.ProtectedRegion,
+            .owned => |*o| try o.ref.payload().pin(),
+            .shared => |*s| try s.ref.payload().pin(),
+        }
+    }
+
+    pub inline fn unpin(self: *Region) void {
+        switch (self.kind) {
+            .guard => {},
+            .owned => |*o| o.ref.payload().unpin(),
+            .shared => |*s| s.ref.payload().unpin(),
+        }
+        self.pin_state.unpin();
+    }
+
+    pub inline fn satisfiesPermissions(self: *const Region, req: paging.Permissions) bool {
+        if (req.writable and !self.permissions.writable) return false;
+        if (req.executable and !self.permissions.executable) return false;
+        if (req.user and !self.permissions.user) return false;
+        return true;
+    }
+
+    pub inline fn snapshot(self: *const Region) RegionSnapshot {
+        return .{
+            .base_va = self.base_va,
+            .end_va = self.end_va,
+            .owner = self.owner,
+            .has_guards = self.has_guards,
+            .permissions = self.permissions,
+            .pinned = self.isPinned(),
+        };
+    }
+
+    pub fn releaseResources(self: *Region, destroy_objects: bool) void {
+        switch (self.kind) {
+            .guard => {},
+            .owned => |*ow| {
+                if (destroy_objects) ow.ref.payload().destroy();
+                ow.ref.release();
+            },
+            .shared => |*sw| {
+                if (destroy_objects) sw.ref.payload().destroy();
+                sw.ref.release();
+            },
+        }
+    }
+
+    pub fn submitMapping(self: *const Region, page_table: *paging.PageTable) !void {
+        if (self.has_guards) {
+            var guard_low = paging.Query{
+                .virtual_address = self.base_va - paging.page_size,
+                .physical_address = null,
+                .batch_size = 1,
+                .state = .guard,
+                .permissions = null,
+                .mem_type = null,
+                .level = null,
+            };
+            try page_table.submit(&guard_low);
+        }
+        errdefer if (self.has_guards) {
+            var rollback_low = paging.Query{
+                .virtual_address = self.base_va - paging.page_size,
+                .physical_address = null,
+                .batch_size = 1,
+                .state = .unmapped,
+                .permissions = null,
+                .mem_type = null,
+                .level = null,
+            };
+            page_table.submit(&rollback_low) catch {};
+        };
+
+        switch (self.kind) {
+            .guard => {
                 var query = paging.Query{
                     .virtual_address = self.base_va,
                     .physical_address = null,
@@ -524,17 +937,47 @@ pub const Region = struct {
             },
             .owned => |*o| {
                 const obj = o.ref.payload();
-                try self.submitObjectMapping(page_table, obj, obj.permissions);
+                try self.submitObjectMapping(page_table, obj, self.permissions);
             },
             .shared => |*s| {
-                var shared_obj = s.ref.payload();
+                const shared_obj = s.ref.payload();
                 const obj = shared_obj.object.payload();
-                try self.submitObjectMapping(page_table, obj, shared_obj.permissions);
+                try self.submitObjectMapping(page_table, obj, self.permissions);
             },
+        }
+        errdefer {
+            var rollback_main = paging.Query{
+                .virtual_address = self.base_va,
+                .physical_address = null,
+                .batch_size = @intCast((self.end_va - self.base_va) / paging.page_size),
+                .state = .unmapped,
+                .permissions = null,
+                .mem_type = null,
+                .level = null,
+            };
+            page_table.submit(&rollback_main) catch {};
+        }
+
+        if (self.has_guards) {
+            var guard_high = paging.Query{
+                .virtual_address = self.end_va,
+                .physical_address = null,
+                .batch_size = 1,
+                .state = .guard,
+                .permissions = null,
+                .mem_type = null,
+                .level = null,
+            };
+            try page_table.submit(&guard_high);
         }
     }
 
-    inline fn submitObjectMapping(self: *const Region, page_table: *paging.PageTable, obj: *virt.OwnedObject, perms: paging.Permissions) !void {
+    inline fn submitObjectMapping(
+        self: *const Region,
+        page_table: *paging.PageTable,
+        obj: *OwnedObject,
+        perms: paging.Permissions,
+    ) !void {
         const mtype = obj.mem_type;
 
         const int_state = obj.lock.acquire(.read, 0);
@@ -591,7 +1034,7 @@ pub const Region = struct {
             .contiguous => |pa| {
                 is_uncommitted = false;
                 current_pa = pa;
-                batch_size = obj.length;
+                batch_size = (self.end_va - self.base_va) / paging.page_size;
             },
         }
 
@@ -600,7 +1043,15 @@ pub const Region = struct {
         }
     }
 
-    inline fn submitBatch(page_table: *paging.PageTable, va: u64, pa: ?u64, count: usize, is_uncommitted: bool, perms: paging.Permissions, mtype: paging.MemType) !void {
+    inline fn submitBatch(
+        page_table: *paging.PageTable,
+        va: u64,
+        pa: ?u64,
+        count: usize,
+        is_uncommitted: bool,
+        perms: paging.Permissions,
+        mtype: paging.MemType,
+    ) !void {
         var query = paging.Query{
             .virtual_address = va,
             .physical_address = pa,
@@ -614,10 +1065,12 @@ pub const Region = struct {
     }
 
     pub fn unmapRegion(self: *const Region, page_table: *paging.PageTable) !void {
+        const start = self.reservedStart();
+        const end = self.reservedEnd();
         var query = paging.Query{
-            .virtual_address = self.base_va,
+            .virtual_address = start,
             .physical_address = null,
-            .batch_size = @intCast((self.end_va - self.base_va) / paging.page_size),
+            .batch_size = @intCast((end - start) / paging.page_size),
             .state = .unmapped,
             .permissions = null,
             .mem_type = null,

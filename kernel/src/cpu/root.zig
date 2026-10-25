@@ -133,7 +133,7 @@ pub fn updateHhdm() void {
 }
 
 pub fn allocInitStacks() !void {
-    const kernel_space: *mem.virt.Space = mem.virt.kernel_space.payload();
+    const k_view: *mem.virt.View = mem.virt.kernel_view.payload();
 
     var cpu_it = cpu_contexts.iterator();
     while (cpu_it.next()) |context| {
@@ -141,7 +141,7 @@ pub fn allocInitStacks() !void {
         const pages_count = stack_size / mem.paging.page_size;
         const stack_base_pa = try mem.phys.allocContiguous(pages_count);
 
-        _, var ref = try mem.virt.OwnedObject.map.insert(.{
+        _, const ref = mem.virt.OwnedObject.map.insert(.{
             .length = pages_count,
             .mem_type = .writeback,
             .permissions = .{
@@ -150,15 +150,24 @@ pub fn allocInitStacks() !void {
                 .user = false,
                 .writable = true,
             },
+            .owns_physical = true,
             .physical_mapping = .{ .contiguous = stack_base_pa },
-        });
-        errdefer ref.release();
+        }) catch |err| {
+            mem.phys.freeContiguous(stack_base_pa, pages_count);
+            return err;
+        };
 
-        const stack_base_va = try kernel_space.alloc(stack_size, .{
+        const stack_base_va = try k_view.alloc(stack_size, .{
             .owned = ref,
         }, true, 0);
 
-        const stack_top_va = stack_base_va + stack_size;
-        context.init_stack_top = stack_top_va;
+        _ = try k_view.pinRange(stack_base_va, stack_size, .{
+            .writable = true,
+            .executable = false,
+            .user = false,
+            .global = true,
+        });
+
+        context.init_stack_top = stack_base_va + stack_size;
     }
 }
