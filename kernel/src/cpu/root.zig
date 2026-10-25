@@ -25,7 +25,6 @@ const kernel = @import("root");
 const arch = kernel.arch;
 
 const drivers = kernel.drivers;
-const acpi = drivers.acpi;
 
 const mem = kernel.mem;
 const utils = mem.utils;
@@ -35,6 +34,10 @@ const sched = kernel.sched;
 // --- cpu/root.zig --- //
 
 var initialized = false;
+var bsp_index: usize = 0;
+var online_cpus: std.atomic.Value(usize) = .init(0);
+var scheduler_ready: std.atomic.Value(bool) = .init(false);
+
 var cpu_contexts: utils.UnrolledList(CpuContext, null) = .{};
 
 pub const CpuContext = struct {
@@ -42,6 +45,8 @@ pub const CpuContext = struct {
     hardware_id: u64,
     processor_id: u64,
     init_stack_top: u64,
+    mp_info: *limine.MpInfo,
+    online: std.atomic.Value(bool) = .init(false),
 
     interrupts_context: arch.interrupts.InterruptsContext = undefined,
     phys_context: mem.phys.PhysContext = undefined,
@@ -64,9 +69,14 @@ pub const CpuContext = struct {
             .hardware_id = hardwareId(mp_info),
             .processor_id = mp_info.processor_id,
             .init_stack_top = 0,
+            .mp_info = mp_info,
         });
         const cpu_context = cpu_contexts.getPtr(index).?;
         cpu_context.index = index;
+
+        if (index > 0 and cpu_context.processor_id == 0) {
+            cpu_context.processor_id = index;
+        }
 
         try cpu_context.interrupts_context.init();
         try cpu_context.phys_context.init();
@@ -77,6 +87,7 @@ pub const CpuContext = struct {
     }
 
     pub fn updateHhdm(self: *CpuContext) void {
+        self.mp_info = mem.updatePtr(limine.MpInfo, self.mp_info);
         self.interrupts_context.updateHhdm();
         self.phys_context.updateHhdm();
         self.sched_context.updateHhdm();
@@ -88,31 +99,122 @@ pub const CpuContext = struct {
 
 export var mp_request: limine.MpRequest linksection(".limine_requests") = .{};
 
+pub fn count() usize {
+    return cpu_contexts.len;
+}
+
+pub fn onlineCount() usize {
+    return online_cpus.load(.acquire);
+}
+
 pub fn init() !void {
     const mp_response: *limine.MpResponse = mp_request.response orelse return error.MpNotFound;
 
     const mp_infos = mp_response.getCpus();
     if (mp_infos.len == 0) return error.InvalidMp;
 
-    var this_cpu: *CpuContext = undefined;
+    var this_cpu: ?*CpuContext = null;
 
     for (mp_infos) |mp_info| {
         const cpu_context = try CpuContext.init(mp_info);
 
-        switch (comptime builtin.cpu.arch) {
-            .aarch64 => if (mp_response.bsp_mpidr == cpu_context.hardware_id) {
-                this_cpu = cpu_context;
-            },
-            .riscv64 => if (mp_response.bsp_hartid == cpu_context.hardware_id) {
-                this_cpu = cpu_context;
-            },
+        const is_bsp = switch (comptime builtin.cpu.arch) {
+            .aarch64 => mp_response.bsp_mpidr == cpu_context.hardware_id,
+            .riscv64 => mp_response.bsp_hartid == cpu_context.hardware_id,
             else => unreachable,
+        };
+
+        if (is_bsp) {
+            this_cpu = cpu_context;
+            bsp_index = cpu_context.index;
         }
     }
 
-    arch.interrupts.cpuInit(this_cpu);
+    const bsp = this_cpu orelse return error.BspNotFound;
+    bsp.online.store(true, .release);
+    online_cpus.store(1, .release);
+
+    arch.interrupts.cpuInit(bsp);
 
     initialized = true;
+}
+
+pub fn initSecondary() !void {
+    const total_cpus = cpu_contexts.len;
+
+    if (total_cpus > 1) {
+        var cpu_it = cpu_contexts.iterator();
+        while (cpu_it.next()) |context| {
+            if (context.index == bsp_index) continue;
+
+            @atomicStore(u64, &context.mp_info.extra_argument, @intFromPtr(context), .release);
+            @atomicStore(?limine.GotoAddress, &context.mp_info.goto_address, &secondary_entry, .release);
+        }
+
+        switch (comptime builtin.cpu.arch) {
+            .aarch64 => asm volatile ("dsb ishst\nsev" ::: .{ .memory = true }),
+            .riscv64 => asm volatile ("fence rw, rw" ::: .{ .memory = true }),
+            else => unreachable,
+        }
+
+        while (online_cpus.load(.acquire) < total_cpus) {
+            std.atomic.spinLoopHint();
+        }
+    }
+
+    try arch.virt.clean();
+
+    std.log.info("{} / {} CPUs online", .{ online_cpus.load(.acquire), total_cpus });
+}
+
+pub fn releaseSecondaryToScheduler() void {
+    scheduler_ready.store(true, .release);
+    switch (comptime builtin.cpu.arch) {
+        .aarch64 => asm volatile ("dsb ishst\nsev" ::: .{ .memory = true }),
+        .riscv64 => asm volatile ("fence rw, rw" ::: .{ .memory = true }),
+        else => unreachable,
+    }
+}
+
+fn secondary_entry(mp_info: *limine.MpInfo) callconv(.c) noreturn {
+    const context_new_va = @atomicLoad(u64, &mp_info.extra_argument, .acquire);
+    const context_old_ptr: *const CpuContext = @ptrFromInt(context_new_va - mem.hhdm_offset + mem.old_hhdm);
+    const init_stack_top = context_old_ptr.init_stack_top;
+
+    arch.virt.configureWithArg(
+        init_stack_top,
+        @intFromPtr(&secondary_stage2),
+        context_new_va,
+    );
+}
+
+fn secondary_stage2(cpu_context: *CpuContext) callconv(.c) noreturn {
+    arch.interrupts.cpuInit(cpu_context);
+
+    const root_dom = drivers.intc.getRoot() catch |err| {
+        std.debug.panic("AP {}: Root.InterruptController: {s}", .{ cpu_context.processor_id, @errorName(err) });
+    };
+
+    root_dom.initLocal() catch |err| {
+        std.debug.panic("AP {}: Root.InterruptController.initLocal: {s}", .{ cpu_context.processor_id, @errorName(err) });
+    };
+
+    drivers.timer.initPerCpu() catch |err| {
+        std.debug.panic("AP {}: drivers.timer.initPerCpu: {s}", .{ cpu_context.processor_id, @errorName(err) });
+    };
+
+    cpu_context.online.store(true, .release);
+    _ = online_cpus.fetchAdd(1, .acq_rel);
+
+    while (!scheduler_ready.load(.acquire)) {
+        std.atomic.spinLoopHint();
+    }
+
+    _ = arch.interrupts.set(.enabled);
+
+    drivers.timer.arm(drivers.timer.now());
+
+    arch.cpu.halt();
 }
 
 inline fn hardwareId(mp_info: *limine.MpInfo) u64 {

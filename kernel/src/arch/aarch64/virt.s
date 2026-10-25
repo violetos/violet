@@ -25,14 +25,15 @@ virt_switch:
     // x3 = sp
     // x4 = trampoline_pa
     // x5 = goto_address
+    // x6 = arg
 
     br x4
 
 .globl virt_trampoline
 virt_trampoline:
-    mrs x6, sctlr_el1
-    bic x6, x6, #1
-    msr sctlr_el1, x6
+    mrs x7, sctlr_el1
+    bic x7, x7, #1
+    msr sctlr_el1, x7
     isb
 
     msr mair_el1, x0
@@ -48,9 +49,24 @@ virt_trampoline:
 
     mov sp, x3
 
-    mrs x6, sctlr_el1
-    orr x6, x6, #1
-    msr sctlr_el1, x6
+    mrs x7, sctlr_el1
+    orr x7, x7, #1
+    msr sctlr_el1, x7
     isb
 
+    ldr x7, =.Lvirt_high_half
+    br x7
+
+.Lvirt_high_half:
+    mrs x7, tcr_el1
+    orr x7, x7, #(1 << 7)
+    msr tcr_el1, x7
+    msr ttbr0_el1, xzr
+    isb
+
+    tlbi vmalle1
+    dsb nsh
+    isb
+
+    mov x0, x6
     br x5

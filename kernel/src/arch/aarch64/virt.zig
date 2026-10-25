@@ -34,6 +34,7 @@ extern fn virt_switch(
     sp: u64,
     trampoline_pa: u64,
     goto_address: u64,
+    arg: u64,
 ) noreturn;
 
 extern const virt_trampoline: opaque {};
@@ -76,6 +77,10 @@ pub fn prepare() !void {
 }
 
 pub fn configure(sp: u64, goto_address: u64) noreturn {
+    configureWithArg(sp, goto_address, 0);
+}
+
+pub fn configureWithArg(sp: u64, goto_address: u64, arg: u64) noreturn {
     var tcr = arch.registers.TCR.load();
     tcr.epd0 = true;
     tcr.store();
@@ -126,10 +131,11 @@ pub fn configure(sp: u64, goto_address: u64) noreturn {
         sp,
         trampoline_pa,
         goto_address,
+        arg,
     );
 }
 
-/// done after BSP and all APs called configure()
+/// Done after BSP and all APs have completed configure() / configureWithArg().
 pub fn clean() !void {
     trampoline_ttbr0.deinit();
 }

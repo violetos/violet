@@ -23,7 +23,6 @@ const kernel = @import("root");
 const arch = kernel.arch;
 
 const mem = kernel.mem;
-const paging = mem.paging;
 
 // --- arch/riscv64/virt.zig --- //
 
@@ -33,14 +32,30 @@ pub fn configure(
     sp: u64,
     goto_address: u64,
 ) noreturn {
-    arch.paging.activate(null, mem.virt.kernel_pagetable);
+    configureWithArg(sp, goto_address, 0);
+}
 
+pub fn configureWithArg(
+    sp: u64,
+    goto_address: u64,
+    arg: u64,
+) noreturn {
     asm volatile (
-        \\ mv sp, %[sp]
-        \\ jr %[goto]
+        \\ mv s2, %[sp]
+        \\ mv s3, %[goto]
+        \\ mv s4, %[arg]
         :
         : [sp] "r" (sp),
           [goto] "r" (goto_address),
+          [arg] "r" (arg),
+        : .{ .s2 = true, .s3 = true, .s4 = true });
+
+    arch.paging.activate(null, mem.virt.kernel_pagetable);
+
+    asm volatile (
+        \\ mv sp, s2
+        \\ mv a0, s4
+        \\ jr s3
     );
 
     unreachable;

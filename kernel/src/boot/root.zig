@@ -145,6 +145,15 @@ pub fn stage2_entry() callconv(.c) noreturn {
     if (available_mib < 384) std.debug.panic("available memory: {} MiB is under 384 MiB requirement", .{available_mib});
     std.log.info("available memory: {} MiB", .{available_mib});
 
+    kernel.cpu.initSecondary() catch |err| {
+        std.debug.panic("kernel.cpu.initSecondary: {s}", .{@errorName(err)});
+    };
+
+    kernel.cpu.releaseSecondaryToScheduler();
+
+    _ = arch.interrupts.set(.enabled);
+    drivers.timer.arm(drivers.timer.now() + 2000);
+
     arch.cpu.halt();
 }
 
