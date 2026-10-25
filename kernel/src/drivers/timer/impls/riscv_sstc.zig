@@ -86,7 +86,7 @@ pub const discover_stage: ?drivers.Stage = .stage4;
 
 var discovered = false;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
 
     if (xsdt) |x| try xsdtDiscover(x);
@@ -106,10 +106,19 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
     if (discovered) return;
 
-    _ = dt;
+    const cpus_node = dt.findPath("/cpus") orelse return;
+
+    freq_hz = cpus_node.getPropU64("timebase-frequency") orelse return error.InvalidFrequency;
+    if (freq_hz == 0) return error.InvalidFrequency;
+
+    boot_offset = readTime();
+
+    drivers.timer.impl = asTimer();
+
+    discovered = true;
 }
 
 // --- //

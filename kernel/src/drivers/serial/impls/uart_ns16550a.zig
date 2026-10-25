@@ -33,7 +33,7 @@ pub const discover_stage: ?drivers.Stage = null;
 
 var instances: [2]@This() = @splat(undefined);
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     if (xsdt) |x| try xsdtDiscover(stage, x);
     if (dt) |d| try dtDiscover(stage, d);
 }
@@ -87,13 +87,53 @@ inline fn xsdtDiscover(comptime stage: drivers.Stage, xsdt: *const acpi.Xsdt) !v
 }
 
 var dt_discovered = false;
-inline fn dtDiscover(comptime stage: drivers.Stage, dt: void) !void {
-    _ = stage;
-    _ = dt;
+const dt_compatibles: []const []const u8 = &.{
+    "ns16550a",
+    "ns16550",
+    "ns16450",
+    "ns8250",
+    "snps,dw-apb-uart",
+    "brcm,bcm2835-aux-uart",
+};
 
+inline fn dtDiscover(comptime stage: drivers.Stage, dt: drivers.dt.Fdt) !void {
     if (dt_discovered) return;
+    if (stage != .stage2) return;
 
-    // instances[1]
+    const node = dt.findStdoutOrCompatible(dt_compatibles) orelse return;
+    const reg = node.reg(0) orelse return;
+    if (reg.base == 0) return;
+
+    const reg_offset: usize = if (node.getPropU32("reg-offset")) |off| @intCast(off) else 0;
+    const stride: usize = if (node.getPropU32("reg-shift")) |shift|
+        (if (shift < 4) @as(usize, 1) << @intCast(shift) else 1)
+    else if (node.isCompatible("brcm,bcm2835-aux-uart"))
+        4
+    else
+        1;
+
+    const divisor: ?u16 = blk: {
+        const clk = node.getPropU32("clock-frequency") orelse break :blk null;
+        if (clk == 0) break :blk null;
+        const baud = node.getPropU32("current-speed") orelse 115200;
+        if (baud == 0) break :blk null;
+        const div = (clk + (8 * baud)) / (16 * baud);
+        if (div == 0 or div > std.math.maxInt(u16)) break :blk null;
+        break :blk @intCast(div);
+    };
+
+    const map_size = @max(reg.size, kernel.mem.paging.page_size);
+
+    instances[1] = .{
+        .bus = .{
+            .base = (try kernel.mem.virt.mmio(reg.base, map_size)) + reg_offset,
+            .stride = stride,
+        },
+    };
+
+    try init(&instances[1], divisor, 10);
+
+    dt_discovered = true;
 }
 
 bus: Bus,

@@ -95,6 +95,10 @@ pub const CpuContext = struct {
     }
 };
 
+pub fn getContext(index: usize) ?*CpuContext {
+    return cpu_contexts.getPtr(index);
+}
+
 // --- //
 
 export var mp_request: limine.MpRequest linksection(".limine_requests") = .{};

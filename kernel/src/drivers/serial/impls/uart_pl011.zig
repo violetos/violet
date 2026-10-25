@@ -29,8 +29,9 @@ pub const architectures: []const std.Target.Cpu.Arch = &.{ .aarch64, .riscv64 };
 pub const discover_stage: ?drivers.Stage = .stage2;
 
 var instances: [2]@This() = @splat(undefined);
+var discovered = false;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
 
     if (xsdt) |x| try xsdtDiscover(x);
@@ -155,12 +156,88 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
         .context = @ptrCast(self),
         .vtable = .{ .write = write, .read = null },
     }, 15);
+
+    discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
-    _ = dt;
+const dt_compatibles: []const []const u8 = &.{
+    "arm,pl011",
+    "arm,sbsa-uart",
+    "arm,primecell",
+};
 
-    // instances[1]
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
+    if (discovered) return;
+
+    const node = dt.findStdoutOrCompatible(dt_compatibles) orelse return;
+    const reg = node.reg(0) orelse return;
+    if (reg.base == 0) return;
+
+    const reg_offset: usize = if (node.getPropU32("reg-offset")) |off| @intCast(off) else 0;
+    const stride: usize = if (node.getPropU32("reg-shift")) |shift|
+        (if (shift < 4) @as(usize, 1) << @intCast(shift) else 4)
+    else
+        4;
+
+    const map_size = @max(reg.size, kernel.mem.paging.page_size);
+
+    instances[1] = .{
+        .peripheral_base = (try kernel.mem.virt.mmio(reg.base, map_size)) + reg_offset,
+        .stride = stride,
+    };
+
+    const self = &instances[1];
+    const is_sbsa = node.isCompatible("arm,sbsa-uart");
+
+    if (!is_sbsa) {
+        if (node.getPropU32("clock-frequency")) |clock_frequency| {
+            if (clock_frequency > 0) {
+                const baud_rate: u32 = node.getPropU32("current-speed") orelse 115200;
+                const divisor = 16 * baud_rate;
+
+                if (divisor > 0) {
+                    self.disableUart();
+                    self.maskAllInterrupts();
+
+                    const ibrd = @as(u16, @intCast(clock_frequency / divisor));
+                    const remainder = clock_frequency % divisor;
+                    const fbrd = @as(u6, @intCast(((remainder * 64) + (divisor / 2)) / divisor));
+
+                    self.writeReg(UART_IBRD, @as(u32, ibrd));
+                    self.writeReg(UART_FBRD, @as(u32, fbrd));
+
+                    self.writeReg(UART_LCR_H, LineControlRegister{
+                        .brk = false,
+                        .par = false,
+                        .eps = false,
+                        .stp2 = false,
+                        .fen = true,
+                        .wlen = .u8,
+                        .sps = false,
+                        ._reserved = 0,
+                    });
+
+                    self.enableReceive();
+                    self.enableTransmit();
+                    self.enableUart();
+                }
+            }
+        } else {
+            self.maskAllInterrupts();
+            self.enableTransmit();
+            self.enableUart();
+        }
+    } else {
+        self.maskAllInterrupts();
+    }
+
+    drivers.serial.register(.{
+        .name = "pl011",
+        .context = @ptrCast(self),
+        .vtable = .{ .write = write, .read = null },
+    }, 15);
+
+    discovered = true;
 }
 
 const Self = @This();

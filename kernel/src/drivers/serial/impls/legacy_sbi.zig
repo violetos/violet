@@ -31,7 +31,7 @@ const mem = kernel.mem;
 pub const architectures: []const std.Target.Cpu.Arch = &.{.riscv64};
 pub const discover_stage: ?drivers.Stage = .stage0;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
     _ = xsdt;
     _ = dt;

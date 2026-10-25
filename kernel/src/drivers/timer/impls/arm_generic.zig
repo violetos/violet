@@ -152,7 +152,7 @@ pub const discover_stage: ?drivers.Stage = .stage4;
 
 var discovered = false;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
 
     if (xsdt) |x| try xsdtDiscover(x);
@@ -178,10 +178,30 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
     if (discovered) return;
 
-    _ = dt;
+    const node = dt.findCompatibleAny(&.{
+        "arm,armv8-timer",
+        "arm,armv7-timer",
+    }) orelse return;
+
+    const el2 = kernel.arch.registers.currentEL().isEl2();
+    active_vtable = if (el2) &vtable_el2 else &vtable_el1;
+
+    freq_hz = readCntfrq();
+    if (freq_hz == 0) {
+        freq_hz = node.getPropU32("clock-frequency") orelse return error.InvalidFrequency;
+    }
+
+    gsiv = if (el2) 30 else 27;
+    flags = @bitCast(@as(u32, 0)); // level-high
+
+    boot_offset = if (el2) readCntpct() else readCntvct();
+
+    drivers.timer.impl = asTimer();
+
+    discovered = true;
 }
 
 // --- registers --- //

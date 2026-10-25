@@ -37,16 +37,27 @@ export var end_marker: limine.RequestsEndMarker linksection(".limine_requests_en
 export var base_revision: limine.BaseRevision linksection(".limine_requests") = .init(6);
 export var hhdm_request: limine.HhdmRequest linksection(".limine_requests") = .{};
 export var memmap_request: limine.MemoryMapRequest linksection(".limine_requests") = .{};
-export var rsdp_request: limine.RsdpRequest linksection(".limine_requests") = .{};
 export var pagingmode_request: limine.PagingModeRequest linksection(".limine_requests") = .{ .mode = requested_mode, .max_mode = requested_mode, .min_mode = requested_mode };
 
 export var framebuffer_request: limine.FramebufferRequest linksection(".limine_requests") = .{};
 
+export var rsdp_request: limine.RsdpRequest linksection(".limine_requests") = .{};
+export var dtb_request: limine.DtbRequest linksection(".limine_requests") = .{};
+
 var xsdt_pa: ?u64 = null;
+var dtb_pa: ?u64 = null;
 
 fn getXsdt() ?*const acpi.Xsdt {
     if (xsdt_pa) |pa| {
         return mem.toHhdm(acpi.Xsdt, pa);
+    }
+    return null;
+}
+
+fn getFdt() ?drivers.dt.Fdt {
+    if (dtb_pa) |pa| {
+        const ptr = mem.toHhdm(u8, pa);
+        return drivers.dt.Fdt.init(ptr);
     }
     return null;
 }
@@ -73,7 +84,7 @@ export fn kernel_entry() callconv(.c) noreturn {
 
     drivers.serial.init();
 
-    drivers.runStage(.stage0, getXsdt(), null);
+    drivers.runStage(.stage0, getXsdt(), getFdt());
 
     const memmap_entries: []*limine.MemoryMapEntry = memmap_request.response.?.getEntries();
     mem.phys.init(memmap_entries) catch |err| {
@@ -88,7 +99,7 @@ export fn kernel_entry() callconv(.c) noreturn {
         std.debug.panic("cpu.init failed: {s}", .{@errorName(err)});
     };
 
-    drivers.runStage(.stage1, getXsdt(), null);
+    drivers.runStage(.stage1, getXsdt(), getFdt());
 
     mem.virt.init(memmap_entries) catch |err| {
         std.debug.panic("mem.virt.init failed: {s}", .{@errorName(err)});
@@ -98,7 +109,7 @@ export fn kernel_entry() callconv(.c) noreturn {
 }
 
 pub fn stage2_entry() callconv(.c) noreturn {
-    drivers.runStage(.stage2, getXsdt(), null);
+    drivers.runStage(.stage2, getXsdt(), getFdt());
 
     drivers.serial.clear(null);
     std.log.info("version {s}", .{build_options.version});
@@ -107,7 +118,7 @@ pub fn stage2_entry() callconv(.c) noreturn {
         std.debug.panic("kernel.syscall.init failed: {s}", .{@errorName(err)});
     };
 
-    drivers.runStage(.stage3, getXsdt(), null);
+    drivers.runStage(.stage3, getXsdt(), getFdt());
 
     {
         const root_dom = drivers.intc.getRoot() catch |err| {
@@ -119,7 +130,7 @@ pub fn stage2_entry() callconv(.c) noreturn {
         };
     }
 
-    drivers.runStage(.stage4, getXsdt(), null);
+    drivers.runStage(.stage4, getXsdt(), getFdt());
 
     drivers.timer.initPerCpu() catch |err| {
         std.debug.panic("drivers.timer.initPerCpu: {s}", .{@errorName(err)});
@@ -152,7 +163,7 @@ pub fn stage2_entry() callconv(.c) noreturn {
     kernel.cpu.releaseSecondaryToScheduler();
 
     _ = arch.interrupts.set(.enabled);
-    drivers.timer.arm(drivers.timer.now() + 2000);
+    drivers.timer.arm(drivers.timer.now());
 
     arch.cpu.halt();
 }

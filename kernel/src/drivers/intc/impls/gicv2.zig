@@ -40,7 +40,7 @@ pub const discover_stage: ?drivers.Stage = .stage3;
 var instance: Self = undefined;
 var discovered: bool = false;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
     if (xsdt) |x| try xsdtDiscover(x);
     if (dt) |d| try dtDiscover(d);
@@ -94,9 +94,42 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
+const dt_compatibles: []const []const u8 = &.{
+    "arm,gic-400",
+    "arm,cortex-a15-gic",
+    "arm,cortex-a9-gic",
+    "arm,cortex-a7-gic",
+    "arm,arm11mp-gic",
+};
+
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
     if (discovered) return;
-    _ = dt;
+
+    const node = dt.findCompatibleAny(dt_compatibles) orelse return;
+
+    const gicd_reg = node.reg(0) orelse return;
+    const gicc_reg = node.reg(1) orelse return;
+    if (gicd_reg.base == 0 or gicc_reg.base == 0) return;
+
+    const gicd_virt = try kernel.mem.virt.mmio(
+        gicd_reg.base,
+        @max(gicd_reg.size, GICD_MMIO_SIZE),
+    );
+    const gicc_virt = try kernel.mem.virt.mmio(
+        gicc_reg.base,
+        @max(gicc_reg.size, GICC_MMIO_SIZE),
+    );
+
+    instance = .{
+        .gicd_base = gicd_virt,
+        .gicc_base = @splat(gicc_virt),
+    };
+
+    instance.distInit();
+
+    try intc.registerRoot(instance.asIntc());
+
+    discovered = true;
 }
 
 // --- Constants & Registers (ARM IHI 0048B.b) --- //

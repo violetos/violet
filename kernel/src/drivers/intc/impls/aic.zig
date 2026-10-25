@@ -24,12 +24,12 @@ const kernel = @import("root");
 const drivers = kernel.drivers;
 const acpi = drivers.acpi;
 
-// --- drivers/intc/impls/gicv2.zig --- //
+// --- drivers/intc/impls/aic.zig --- //
 
 pub const architectures: []const std.Target.Cpu.Arch = &.{.aarch64};
 pub const discover_stage: ?drivers.Stage = .stage3;
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
     _ = xsdt;
     _ = dt;

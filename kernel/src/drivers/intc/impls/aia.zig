@@ -48,7 +48,7 @@ fn Deref(comptime T: type) type {
     };
 }
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
     if (xsdt) |x| try xsdtDiscover(x);
     if (dt) |d| try dtDiscover(d);
@@ -133,9 +133,205 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
     if (discovered) return;
-    _ = dt;
+
+    instance = .{};
+    errdefer instance.cpus.deinit();
+
+    const cpu_count = kernel.cpu.count();
+    if (cpu_count == 0) return;
+
+    for (0..cpu_count) |idx| {
+        const ctx = kernel.cpu.getContext(idx) orelse return;
+        _ = try instance.cpus.append(.{
+            .hart_id = ctx.hardware_id,
+            .idc_index = @truncate(idx),
+        });
+    }
+
+    var min_imsic_phys: u64 = std.math.maxInt(u64);
+
+    if (findSmodeImsicNode(&dt)) |imsic_node| {
+        if (imsic_node.getPropU32("riscv,num-ids")) |num_ids| {
+            if (num_ids > 0) instance.imsic_num_ids = @min(num_ids, MAX_IMSIC_ID);
+        }
+        if (imsic_node.getPropU32("riscv,hart-index-bits")) |b| {
+            instance.hart_index_bits = @truncate(b);
+        }
+        if (imsic_node.getPropU32("riscv,group-index-bits")) |b| {
+            instance.group_index_bits = @truncate(b);
+        }
+        if (imsic_node.getPropU32("riscv,group-index-shift")) |s| {
+            instance.group_index_shift = @truncate(s);
+        }
+
+        const int_ext = imsic_node.getProp("interrupts-extended") orelse &.{};
+        const num_targets = int_ext.len / 8;
+
+        var reg_idx: usize = 0;
+        var file_idx: usize = 0;
+
+        while (imsic_node.reg(reg_idx)) |r| : (reg_idx += 1) {
+            if (r.base == 0 or r.size < IMSIC_FILE_SIZE) continue;
+
+            const range_virt = try kernel.mem.virt.mmio(r.base, r.size);
+            min_imsic_phys = @min(min_imsic_phys, r.base);
+            instance.has_imsic = true;
+
+            const files_in_range = r.size / IMSIC_FILE_SIZE;
+            var f: usize = 0;
+            while (f < files_in_range) : ({
+                f += 1;
+                file_idx += 1;
+            }) {
+                const file_phys = r.base + f * IMSIC_FILE_SIZE;
+                const file_virt = range_virt + f * IMSIC_FILE_SIZE;
+
+                const target_hart_id: ?u64 = if (file_idx < num_targets) blk: {
+                    const phandle = std.mem.readInt(u32, int_ext[file_idx * 8 ..][0..4], .big);
+                    break :blk resolveHartIdFromIntcPhandle(&dt, phandle);
+                } else null;
+
+                if (target_hart_id) |hid| {
+                    var cpu_it = instance.cpus.iterator();
+                    while (cpu_it.next()) |cpu| {
+                        if (cpu.hart_id == hid) {
+                            cpu.imsic_phys = file_phys;
+                            cpu.imsic_base = file_virt;
+                            break;
+                        }
+                    }
+                } else if (instance.cpus.getPtr(file_idx)) |cpu| {
+                    if (cpu.imsic_base == 0) {
+                        cpu.imsic_phys = file_phys;
+                        cpu.imsic_base = file_virt;
+                    }
+                }
+            }
+        }
+    }
+
+    if (findSmodeAplicNode(&dt)) |aplic_node| {
+        if (aplic_node.reg(0)) |r| {
+            if (r.base != 0) {
+                const aplic_len = @max(@as(usize, @intCast(r.size)), APLIC_MIN_MMIO_SIZE);
+                instance.aplic_base = try kernel.mem.virt.mmio(r.base, aplic_len);
+
+                const num_sources = aplic_node.getPropU32("riscv,num-sources") orelse 96;
+                instance.max_source_id = @min(num_sources, MAX_APLIC_SOURCES);
+
+                // In direct delivery mode, map each IDC index from `interrupts-extended` to its hart.
+                if (!instance.has_imsic) {
+                    if (aplic_node.getProp("interrupts-extended")) |int_ext| {
+                        const idc_count = int_ext.len / 8;
+                        instance.num_idc = @intCast(idc_count);
+
+                        for (0..idc_count) |idc_idx| {
+                            const phandle = std.mem.readInt(u32, int_ext[idc_idx * 8 ..][0..4], .big);
+                            if (resolveHartIdFromIntcPhandle(&dt, phandle)) |hid| {
+                                var cpu_it = instance.cpus.iterator();
+                                while (cpu_it.next()) |cpu| {
+                                    if (cpu.hart_id == hid) {
+                                        cpu.idc_index = @intCast(idc_idx);
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!instance.has_imsic and instance.aplic_base == 0) {
+        instance.cpus.deinit();
+        return;
+    }
+
+    if (instance.has_imsic and min_imsic_phys != std.math.maxInt(u64)) {
+        instance.imsic_base_phys = min_imsic_phys;
+
+        var cpu_it = instance.cpus.iterator();
+        while (cpu_it.next()) |cpu| {
+            if (cpu.imsic_phys != 0) {
+                cpu.msi_hart_index = instance.computeMsiHartIndex(cpu.imsic_phys);
+            }
+        }
+    }
+
+    if (instance.aplic_base != 0) {
+        instance.aplicInit();
+    }
+
+    try intc.registerRoot(instance.asIntc());
+
+    discovered = true;
+}
+
+fn findSmodeImsicNode(dt: *const drivers.dt.Fdt) ?drivers.dt.Node {
+    const root_node = dt.root() orelse return null;
+    return findNodeRecursive(root_node, "riscv,imsics", true);
+}
+
+fn findSmodeAplicNode(dt: *const drivers.dt.Fdt) ?drivers.dt.Node {
+    const root_node = dt.root() orelse return null;
+    return findNodeRecursive(root_node, "riscv,aplic", false);
+}
+
+fn findNodeRecursive(
+    node: drivers.dt.Node,
+    compat: []const u8,
+    comptime is_imsic: bool,
+) ?drivers.dt.Node {
+    if (node.isAvailable() and node.isCompatible(compat)) {
+        if (is_imsic) {
+            if (targetsSupervisorExtIrq(node)) return node;
+        } else {
+            if (!node.hasProp("riscv,children") and !node.hasProp("riscv,delegate")) {
+                return node;
+            }
+            if (targetsSupervisorExtIrq(node)) return node;
+        }
+    }
+
+    var it = node.children();
+    while (it.next()) |child| {
+        if (findNodeRecursive(child, compat, is_imsic)) |found| return found;
+    }
+    return null;
+}
+
+fn targetsSupervisorExtIrq(node: drivers.dt.Node) bool {
+    const bytes = node.getProp("interrupts-extended") orelse return false;
+    if (bytes.len < 8) return false;
+    const irq_code = std.mem.readInt(u32, bytes[4..8], .big);
+    return irq_code == 9; // IRQ_S_EXT = 9 (vs IRQ_M_EXT = 11)
+}
+
+fn resolveHartIdFromIntcPhandle(dt: *const drivers.dt.Fdt, intc_phandle: u32) ?u64 {
+    const cpus_node = dt.findPath("/cpus") orelse return null;
+    var cpu_it = cpus_node.children();
+    while (cpu_it.next()) |cpu_node| {
+        if (!std.mem.eql(u8, cpu_node.baseName(), "cpu")) continue;
+
+        if (cpu_node.getPropU32("phandle") == intc_phandle or
+            cpu_node.getPropU32("linux,phandle") == intc_phandle)
+        {
+            if (cpu_node.reg(0)) |r| return r.base;
+        }
+
+        var sub_it = cpu_node.children();
+        while (sub_it.next()) |sub| {
+            if (sub.getPropU32("phandle") == intc_phandle or
+                sub.getPropU32("linux,phandle") == intc_phandle)
+            {
+                if (cpu_node.reg(0)) |r| return r.base;
+            }
+        }
+    }
+    return null;
 }
 
 // --- //

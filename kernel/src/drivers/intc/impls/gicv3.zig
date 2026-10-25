@@ -48,7 +48,7 @@ fn Deref(comptime T: type) type {
     };
 }
 
-pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) !void {
+pub fn discover(comptime stage: drivers.Stage, xsdt: ?*const acpi.Xsdt, dt: ?drivers.dt.Fdt) !void {
     _ = stage;
     if (xsdt) |x| try xsdtDiscover(x);
     if (dt) |d| try dtDiscover(d);
@@ -92,7 +92,7 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
         switch (rec) {
             .gicr => |r| {
                 if (r.discovery_range_base_address != 0 and r.discovery_range_length >= GICR_RD_AND_SGI_SIZE) {
-                    try instance.discoverGicrRange(r.discovery_range_base_address, r.discovery_range_length);
+                    try instance.discoverGicrRange(r.discovery_range_base_address, r.discovery_range_length, null);
                 }
             },
             .gicc => |g| {
@@ -128,9 +128,64 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
     discovered = true;
 }
 
-inline fn dtDiscover(dt: void) !void {
+inline fn dtDiscover(dt: drivers.dt.Fdt) !void {
     if (discovered) return;
-    _ = dt;
+
+    const node = dt.findCompatibleAny(&.{
+        "arm,gic-v3",
+        "arm,gic-v4",
+    }) orelse return;
+
+    const gicd_reg = node.reg(0) orelse return;
+    if (gicd_reg.base == 0) return;
+
+    instance = .{
+        .gicd_base = try kernel.mem.virt.mmio(
+            gicd_reg.base,
+            @max(gicd_reg.size, GICD_MMIO_SIZE),
+        ),
+    };
+    errdefer {
+        instance.redists.deinit();
+        instance.cpus.deinit();
+    }
+
+    const num_gicr_regions: usize = node.getPropU32("#redistributor-regions") orelse 1;
+    const custom_stride: ?usize = if (node.getPropU64("redistributor-stride")) |s|
+        (if (s >= GICR_RD_AND_SGI_SIZE) @intCast(s) else null)
+    else
+        null;
+
+    var region_idx: usize = 0;
+    while (region_idx < num_gicr_regions) : (region_idx += 1) {
+        const gicr_reg = node.reg(1 + region_idx) orelse break;
+        if (gicr_reg.base != 0 and gicr_reg.size >= GICR_RD_AND_SGI_SIZE) {
+            try instance.discoverGicrRange(gicr_reg.base, gicr_reg.size, custom_stride);
+        }
+    }
+
+    if (instance.redists.len == 0) {
+        instance.redists.deinit();
+        instance.cpus.deinit();
+        return;
+    }
+
+    const cpu_slots = @max(kernel.cpu.count(), instance.redists.len);
+    var i: usize = 0;
+    while (i < cpu_slots) : (i += 1) {
+        const default_redist = instance.redists.get(i) orelse instance.redists.get(0).?;
+        _ = try instance.cpus.append(.{
+            .rd_base = default_redist.rd_base,
+            .sgi_base = default_redist.sgi_base,
+            .affinity = default_redist.affinity,
+        });
+    }
+
+    instance.distInit();
+
+    try intc.registerRoot(instance.asIntc());
+
+    discovered = true;
 }
 
 // --- //
@@ -525,7 +580,7 @@ inline fn gicrWaitRwp(rd_base: usize) void {
 
 // --- //
 
-fn discoverGicrRange(self: *Self, base_phys: u64, length: u32) !void {
+fn discoverGicrRange(self: *Self, base_phys: u64, length: u64, custom_stride: ?usize) !void {
     const range_virt = try kernel.mem.virt.mmio(base_phys, length);
 
     var offset: usize = 0;
@@ -545,7 +600,8 @@ fn discoverGicrRange(self: *Self, base_phys: u64, length: u32) !void {
 
         if (typer.last) break;
 
-        const stride: usize = if (typer.vlpis) GICR_V4_STRIDE else GICR_RD_AND_SGI_SIZE;
+        const stride: usize = custom_stride orelse
+            if (typer.vlpis) GICR_V4_STRIDE else GICR_RD_AND_SGI_SIZE;
         offset += stride;
     }
 }

@@ -25,6 +25,7 @@ pub const serial = @import("serial/root.zig");
 pub const timer = @import("timer/root.zig");
 
 pub const acpi = @import("acpi.zig");
+pub const dt = @import("dt.zig");
 
 // --- drivers/root.zig --- //
 
@@ -128,11 +129,11 @@ pub const all_modules: []const type = blk: {
     break :blk list;
 };
 
-pub fn runStage(comptime stage: Stage, xsdt: ?*const acpi.Xsdt, dt: ?void) void {
+pub fn runStage(comptime stage: Stage, xsdt: ?*const acpi.Xsdt, fdt: ?dt.Fdt) void {
     inline for (all_modules) |Module| {
         comptime if (Module.discover_stage) |ds| if (ds != stage) continue;
 
-        Module.discover(stage, xsdt, dt) catch |err| {
+        Module.discover(stage, xsdt, fdt) catch |err| {
             std.debug.panic("driver '{s}' init at {s} failed: {s}", .{ @tagName(stage), @typeName(Module), @errorName(err) });
         };
     }
