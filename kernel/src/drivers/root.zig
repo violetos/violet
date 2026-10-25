@@ -57,6 +57,7 @@ pub const Driver = enum {
 
     // timer
     arm_generic,
+    riscv_sstc,
 
     pub fn isCompatible(comptime driver: Driver) bool {
         const Module = driver.moduleOf();
@@ -78,6 +79,7 @@ pub const Driver = enum {
             .uart_pl011 => @import("serial/impls/uart_pl011.zig"),
 
             .arm_generic => @import("timer/impls/arm_generic.zig"),
+            .riscv_sstc => @import("timer/impls/riscv_sstc.zig"),
         };
     }
 };

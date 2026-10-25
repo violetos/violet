@@ -56,6 +56,10 @@ pub inline fn setMask(masked: bool) void {
     impl.?.vtable.setMask(impl.?.ptr, masked);
 }
 
+pub inline fn onInterrupt() void {
+    impl.?.vtable.onInterrupt(impl.?.ptr);
+}
+
 pub const TimerImpl = struct {
     ptr: *anyopaque,
     vtable: *const VTable,
@@ -65,6 +69,7 @@ pub const TimerImpl = struct {
         now: *const fn (ptr: *anyopaque) u64,
         arm: *const fn (ptr: *anyopaque, deadline_ns: u64) void,
         setMask: *const fn (ptr: *anyopaque, masked: bool) void,
+        onInterrupt: *const fn (ptr: *anyopaque) void,
     };
 };
 

@@ -68,8 +68,10 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
                     gicd_phys = g.physical_base_address;
                 }
             },
-            .gicc => {
-                gicc_count += 1;
+            .gicc => |g| {
+                if (g.flags.enabled or g.flags.online_capable) {
+                    gicc_count += 1;
+                }
             },
             else => {},
         }
@@ -87,39 +89,18 @@ inline fn xsdtDiscover(xsdt: *const acpi.Xsdt) !void {
 
     var it2 = madt.iterator();
     while (it2.next()) |rec| {
-        if (comptime @hasField(@TypeOf(rec), "gicr")) {
-            if (rec == .gicr) {
-                const r = rec.gicr;
-                const RType = Deref(@TypeOf(r));
-                const base_phys: u64 = if (comptime @hasField(RType, "discovery_range_base_address"))
-                    r.discovery_range_base_address
-                else if (comptime @hasField(RType, "base_address"))
-                    r.base_address
-                else
-                    0;
-
-                const length: u32 = if (comptime @hasField(RType, "discovery_range_length"))
-                    r.discovery_range_length
-                else if (comptime @hasField(RType, "length"))
-                    r.length
-                else
-                    0;
-
-                if (base_phys != 0 and length >= GICR_RD_AND_SGI_SIZE) {
-                    try instance.discoverGicrRange(base_phys, length);
+        switch (rec) {
+            .gicr => |r| {
+                if (r.discovery_range_base_address != 0 and r.discovery_range_length >= GICR_RD_AND_SGI_SIZE) {
+                    try instance.discoverGicrRange(r.discovery_range_base_address, r.discovery_range_length);
                 }
-            }
-        }
-
-        if (rec == .gicc) {
-            const g = rec.gicc;
-            const GType = Deref(@TypeOf(g));
-            if (comptime @hasField(GType, "gicr_base_address")) {
-                const gicr_phys: u64 = g.gicr_base_address;
-                if (gicr_phys != 0) {
-                    try instance.discoverSingleGicr(gicr_phys);
+            },
+            .gicc => |g| {
+                if ((g.flags.enabled or g.flags.online_capable) and g.gicr_base_address != 0) {
+                    try instance.discoverSingleGicr(g.gicr_base_address);
                 }
-            }
+            },
+            else => {},
         }
     }
 

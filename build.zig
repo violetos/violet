@@ -45,7 +45,7 @@ pub fn build(b: *std.Build) !void {
                 try concat(b, bo.getSoC().getDrivers(), bo.getDrivers())
             else switch (arch) {
                 .aarch64 => "uart_pl011,gicv3,arm_generic",
-                .riscv64 => "uart_ns16550a",
+                .riscv64 => "uart_ns16550a,aia,riscv_sstc",
                 else => "",
             };
 

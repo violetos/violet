@@ -172,10 +172,13 @@ fn syncHandler(code: u64, frame: *ReducedFrame) void {
 
 fn irqHandler(code: u64) void {
     switch (code) {
-        1, 5, 9 => { // supervisor software / timer / external interrupt
+        1, 9 => { // supervisor software / timer / external interrupt
             drivers.intc.handle() catch |err| {
                 log.warn("unhandled interrupt: {s}", .{@errorName(err)});
             };
+        },
+        5 => {
+            drivers.timer.onInterrupt();
         },
         else => {
             log.err("unexpected interrupt (cause={})", .{code});

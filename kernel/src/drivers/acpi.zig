@@ -214,6 +214,8 @@ pub const Madt = extern struct {
         gicr: *const Gicr,
         gic_its: *const GicIts,
         riscv_intc: *const RiscvIntc,
+        riscv_imsic: *const RiscvImsic,
+        riscv_aplic: *const RiscvAplic,
         unknown: *const RecordHeader,
     };
 
@@ -248,6 +250,8 @@ pub const Madt = extern struct {
                 .gicr => if (header.cast(Gicr)) |p| .{ .gicr = p } else .{ .unknown = header },
                 .gic_its => if (header.cast(GicIts)) |p| .{ .gic_its = p } else .{ .unknown = header },
                 .riscv_intc => if (header.cast(RiscvIntc)) |p| .{ .riscv_intc = p } else .{ .unknown = header },
+                .riscv_imsic => if (header.cast(RiscvImsic)) |p| .{ .riscv_imsic = p } else .{ .unknown = header },
+                .riscv_aplic => if (header.cast(RiscvAplic)) |p| .{ .riscv_aplic = p } else .{ .unknown = header },
                 else => .{ .unknown = header },
             };
         }
@@ -275,6 +279,8 @@ pub const Madt = extern struct {
             gicr = 14,
             gic_its = 15,
             riscv_intc = 24,
+            riscv_imsic = 25,
+            riscv_aplic = 26,
             _,
         };
 
@@ -365,10 +371,10 @@ pub const Madt = extern struct {
         flags: LocalApicFlags,
         parking_protocol_version: u32,
         performance_interrupt_gsiv: u32,
-        parked_address: u64,
-        physical_base_address: u64,
-        gicv: u64,
-        gich: u64,
+        parked_address: u64 align(4),
+        physical_base_address: u64 align(4),
+        gicv: u64 align(4),
+        gich: u64 align(4),
         vgic_maintenance_interrupt: u32,
         gicr_base_address: u64 align(4),
         mpidr: u64 align(4),
@@ -381,7 +387,7 @@ pub const Madt = extern struct {
         header: RecordHeader,
         _reserved1: u16,
         gic_id: u32,
-        physical_base_address: u64,
+        physical_base_address: u64 align(4),
         system_vector_base: u32,
         gic_version: u8,
         _reserved2: [3]u8,
@@ -391,7 +397,7 @@ pub const Madt = extern struct {
         header: RecordHeader,
         _reserved1: u16,
         gic_msi_frame_id: u32,
-        physical_base_address: u64,
+        physical_base_address: u64 align(4),
         flags: u32,
         spi_count: u16,
         spi_base: u16,
@@ -412,6 +418,7 @@ pub const Madt = extern struct {
         _reserved2: u32,
     };
 
+    /// RISC-V Interrupt Controller (RINTC) Structure (ACPI 6.5 §5.2.12.26, Type 0x18).
     pub const RiscvIntc = extern struct {
         header: RecordHeader,
         version: u8,
@@ -419,6 +426,37 @@ pub const Madt = extern struct {
         flags: LocalApicFlags,
         hart_id: u64 align(4),
         acpi_processor_uid: u32,
+        ext_intc_id: u32,
+        imsic_base_address: u64 align(4),
+        imsic_size: u32,
+    };
+
+    /// RISC-V Incoming MSI Controller (IMSIC) Structure (ACPI 6.5 §5.2.12.27, Type 0x19).
+    pub const RiscvImsic = extern struct {
+        header: RecordHeader,
+        version: u8,
+        _reserved: u8,
+        flags: u32,
+        num_ids: u16,
+        num_guest_ids: u16,
+        guest_index_bits: u8,
+        hart_index_bits: u8,
+        group_index_bits: u8,
+        group_index_shift: u8,
+    };
+
+    /// RISC-V Advanced Platform-Level Interrupt Controller (APLIC) Structure (ACPI 6.5 §5.2.12.28, Type 0x1A).
+    pub const RiscvAplic = extern struct {
+        header: RecordHeader,
+        version: u8,
+        aplic_id: u8,
+        flags: u32,
+        hardware_id: [8]u8,
+        num_idc: u16,
+        num_sources: u16,
+        gsi_base: u32,
+        physical_base_address: u64 align(4),
+        size: u32,
     };
 
     comptime {
@@ -440,7 +478,9 @@ pub const Madt = extern struct {
         if (@sizeOf(Gicr) != 16) @compileError("Gicr size mismatch");
         if (@sizeOf(GicIts) != 20) @compileError("GicIts size mismatch");
 
-        if (@sizeOf(RiscvIntc) != 20) @compileError("RiscvIntc size mismatch (expected 20 bytes for ACPI 6.5)");
+        if (@sizeOf(RiscvIntc) != 36) @compileError("RiscvIntc size mismatch (expected 36 bytes for ACPI 6.5)");
+        if (@sizeOf(RiscvImsic) != 16) @compileError("RiscvImsic size mismatch (expected 16 bytes for ACPI 6.5)");
+        if (@sizeOf(RiscvAplic) != 36) @compileError("RiscvAplic size mismatch (expected 36 bytes for ACPI 6.5)");
     }
 };
 
@@ -448,6 +488,25 @@ pub const Fadt = extern struct {
     pub const SIGNATURE = "FACP";
 
     header: SdtHeader,
+};
+
+pub const Rhct = extern struct {
+    pub const SIGNATURE = "RHCT";
+
+    header: SdtHeader,
+    flags: Flags,
+    time_base_freq: u64 align(4),
+    num_rhct_nodes: u32,
+    offset_rhct_nodes: u32,
+
+    pub const Flags = packed struct(u32) {
+        _reserved: u32 = 0,
+    };
+
+    comptime {
+        if (@sizeOf(Rhct) != 56) @compileError("Rhct should have a size of 56 bytes");
+        if (@offsetOf(Rhct, "time_base_freq") != 40) @compileError("Rhct.time_base_freq offset mismatch");
+    }
 };
 
 pub const Spcr = extern struct {

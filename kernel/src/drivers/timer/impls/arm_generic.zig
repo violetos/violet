@@ -66,6 +66,7 @@ const vtable_el1: drivers.timer.TimerImpl.VTable = .{
     .now = vUptimeNsV,
     .arm = vArmV,
     .setMask = vMaskV,
+    .onInterrupt = undefined,
 };
 
 fn vUptimeNsP(_: *anyopaque) u64 {
@@ -133,6 +134,7 @@ const vtable_el2: drivers.timer.TimerImpl.VTable = .{
     .now = vUptimeNsP,
     .arm = vArmP,
     .setMask = vMaskP,
+    .onInterrupt = undefined,
 };
 
 var active_vtable: *const drivers.timer.TimerImpl.VTable = undefined;
