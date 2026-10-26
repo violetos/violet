@@ -31,6 +31,10 @@ const mem = kernel.mem;
 // --- asm --- //
 
 extern const trap_vector: u8 linksection(".text");
+extern const call_system_end: u8;
+extern const extend_frame_end: u8;
+extern const trap_push_start: u8;
+extern const trap_push_end: u8;
 
 extern fn call_system(code: basalt.system.call.Code, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, arg7: u64) callconv(.{ .riscv64_lp64 = .{} }) basalt.system.call.FullResult;
 
@@ -46,6 +50,7 @@ extern fn extend_frame(frame: *ReducedFrame) callconv(.{ .riscv64_lp64 = .{} }) 
 pub const TrapAnchor = extern struct {
     cpu_context: u64,
     kernel_stack_top: u64,
+    scratch_a0: u64,
     scratch_t1: u64,
     scratch_t2: u64,
     in_handler: u64,
@@ -54,9 +59,10 @@ pub const TrapAnchor = extern struct {
 comptime {
     std.debug.assert(@offsetOf(TrapAnchor, "cpu_context") == 0);
     std.debug.assert(@offsetOf(TrapAnchor, "kernel_stack_top") == 8);
-    std.debug.assert(@offsetOf(TrapAnchor, "scratch_t1") == 16);
-    std.debug.assert(@offsetOf(TrapAnchor, "scratch_t2") == 24);
-    std.debug.assert(@offsetOf(TrapAnchor, "in_handler") == 32);
+    std.debug.assert(@offsetOf(TrapAnchor, "scratch_a0") == 16);
+    std.debug.assert(@offsetOf(TrapAnchor, "scratch_t1") == 24);
+    std.debug.assert(@offsetOf(TrapAnchor, "scratch_t2") == 32);
+    std.debug.assert(@offsetOf(TrapAnchor, "in_handler") == 40);
 }
 
 const ResumeMode = union(enum) {
@@ -67,6 +73,7 @@ const ResumeMode = union(enum) {
 inline fn captureFrame(frame: *ReducedFrame, resume_mode: ResumeMode) void {
     const context = sched.SchedContext.current();
     if (context.current_task) |*task_ref| {
+        context.in_kernel = false;
         const task: *sched.Task = task_ref.payload();
         task.interrupt_data.frame_state = .{ .reduced_frame = frame };
         task.interrupt_data.resume_mode = resume_mode;
@@ -81,17 +88,34 @@ inline fn currentReducedFrame(fallback: *ReducedFrame) *ReducedFrame {
     return fallback;
 }
 
+fn idleWaitForTask() noreturn {
+    const ic = InterruptsContext.current();
+    ic.trap_anchor.in_handler = 0;
+    const scratch_top = @intFromPtr(&ic.scratch_frame.reduced_frame) + @sizeOf(ReducedFrame);
+
+    asm volatile ("mv sp, %[sp]"
+        :
+        : [sp] "r" (scratch_top),
+        : .{ .memory = true });
+
+    _ = set(.enabled);
+    arch.cpu.halt();
+}
+
 fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
-    const interrupt_data = blk: {
-        const sched_context = sched.SchedContext.current();
-        if (sched_context.current_task) |*task_ref| {
-            break :blk task_ref.payload().interrupt_data;
-        } else {
-            break :blk InterruptData{
-                .frame_state = .{ .reduced_frame = old_frame },
-                .resume_mode = old_mode,
-            };
-        }
+    const sched_context = sched.SchedContext.current();
+
+    const interrupt_data = if (sched_context.current_task) |*task_ref| blk: {
+        sched_context.in_kernel = false;
+        const task: *sched.Task = task_ref.payload();
+        break :blk task.interrupt_data;
+    } else if (sched_context.in_kernel) blk: {
+        break :blk InterruptData{
+            .frame_state = .{ .reduced_frame = old_frame },
+            .resume_mode = old_mode,
+        };
+    } else {
+        idleWaitForTask();
     };
 
     const kernel_stack_top = InterruptsContext.current().trap_anchor.kernel_stack_top;
@@ -111,25 +135,97 @@ fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
     }
 }
 
+// --- //
+
+inline fn resolveFaultView(fault_va: u64) *mem.virt.View {
+    const context = sched.SchedContext.current();
+    if (context.current_task) |*task_ref| {
+        const task: *sched.Task = task_ref.payload();
+        const process = task.process.payload();
+        const proc_view: *mem.virt.View = process.view.payload();
+
+        if (proc_view.space.payload().half.contains(fault_va, fault_va +| 1)) {
+            return proc_view;
+        }
+    }
+    return mem.virt.kernel_view.payload();
+}
+
+inline fn faultFromResult(result: mem.virt.Space.FaultResult) sched.Task.Fault {
+    return switch (result) {
+        .guard_violation => .stack_overflow,
+        .unmapped => .unmapped_memory,
+        .access_violation => .access_violation,
+        .out_of_memory => .out_of_memory,
+        .resolved => unreachable,
+    };
+}
+
+fn faultCurrentTask(code: sched.Task.Fault, fault_va: u64, pc: u64, is_nested: bool) void {
+    const context = sched.SchedContext.current();
+    if (context.current_task) |*task_ref| {
+        const task: *sched.Task = task_ref.payload();
+        log.err(
+            "task fault ({s}, nested={}) at 0x{x} (PC=0x{x})",
+            .{ @tagName(code), is_nested, fault_va, pc },
+        );
+        task.fault(code);
+    } else {
+        std.debug.panic(
+            "fatal kernel fault ({s}, nested={}) at 0x{x} (PC=0x{x}) with no active task",
+            .{ @tagName(code), is_nested, fault_va, pc },
+        );
+    }
+}
+
+inline fn isInFramePush(pc: u64) bool {
+    const cs_start = @intFromPtr(&call_system);
+    const cs_end = @intFromPtr(&call_system_end);
+    if (pc >= cs_start and pc < cs_end) return true;
+
+    const tp_start = @intFromPtr(&trap_push_start);
+    const tp_end = @intFromPtr(&trap_push_end);
+    return (pc >= tp_start and pc < tp_end);
+}
+
+inline fn isInExtendFrame(pc: u64) bool {
+    const ext_start = @intFromPtr(&extend_frame);
+    const ext_end = @intFromPtr(&extend_frame_end);
+    return (pc >= ext_start and pc < ext_end);
+}
+
+// --- //
+
 export fn internal_entry(frame: *ReducedFrame) callconv(.{ .riscv64_lp64 = .{} }) void {
     captureFrame(frame, .via_ret);
+
+    if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+        faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+        restoreCurrent(frame, .via_ret);
+    }
 }
 
 export fn internal_exit(old_frame: *ReducedFrame) callconv(.{ .riscv64_lp64 = .{} }) noreturn {
     restoreCurrent(old_frame, .via_ret);
 }
 
-export fn trap_top_level(frame: *ReducedFrame, sstatus_raw: u64) callconv(.{ .riscv64_lp64 = .{} }) noreturn {
+export fn trap_top_level(frame: *ReducedFrame, sstatus_raw: u64, scause: u64) callconv(.{ .riscv64_lp64 = .{} }) noreturn {
     const sstatus: arch.registers.Sstatus = @bitCast(sstatus_raw);
-    captureFrame(frame, .{ .via_sret = sstatus });
-
-    const scause = arch.registers.csrRead("scause");
     const is_interrupt = (scause >> 63) != 0;
     const code = scause & ~(@as(u64, 1) << 63);
 
+    captureFrame(frame, .{ .via_sret = sstatus });
+
     if (is_interrupt) {
+        if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+            faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+        }
         irqHandler(code);
     } else {
+        if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+            faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+            restoreCurrent(frame, .{ .via_sret = sstatus });
+        }
         syncHandler(code, frame);
     }
 
@@ -144,13 +240,18 @@ fn syncHandler(code: u64, frame: *ReducedFrame) void {
         },
         9 => {
             log.err("unexpected ecall trapped from a privileged (S-mode) task", .{});
-            arch.cpu.halt();
+            faultCurrentTask(.illegal_syscall, 0, frame.program_counter, false);
         },
-        12, 13, 15 => { // instruction/load/store page fault
+        12, 13, 15 => { // instruction / load / store page fault
             const stval = arch.registers.csrRead("stval");
+            if (arch.paging.syncHighHalfIfNeeded(stval)) return;
 
-            log.err("unresolved page fault (cause={}) at 0x{x}", .{ code, stval });
-            arch.cpu.halt();
+            const view = resolveFaultView(stval);
+            const result = view.handlePageFault(stval);
+
+            if (result != .resolved) {
+                faultCurrentTask(faultFromResult(result), stval, frame.program_counter, false);
+            }
         },
         3 => { // EBREAK
             const rframe = currentReducedFrame(frame);
@@ -164,15 +265,15 @@ fn syncHandler(code: u64, frame: *ReducedFrame) void {
             rframe.program_counter += instruction_length;
         },
         else => {
-            log.err("unexpected synchronous trap (cause={})", .{code});
-            arch.cpu.halt();
+            log.err("unexpected synchronous trap (cause={}) at PC=0x{x}", .{ code, frame.program_counter });
+            faultCurrentTask(.unexpected_exception, 0, frame.program_counter, false);
         },
     }
 }
 
 fn irqHandler(code: u64) void {
     switch (code) {
-        1, 9 => { // supervisor software / timer / external interrupt
+        1, 9 => { // supervisor software / external interrupt
             drivers.intc.handle() catch |err| {
                 log.warn("unhandled interrupt: {s}", .{@errorName(err)});
             };
@@ -187,22 +288,50 @@ fn irqHandler(code: u64) void {
     }
 }
 
-export fn trap_nested(scause: u64, stval: u64) callconv(.{ .riscv64_lp64 = .{} }) void {
+export fn trap_nested(nested_frame: *NestedFrame) callconv(.{ .riscv64_lp64 = .{} }) void {
+    const scause = nested_frame.scause;
+    const stval = nested_frame.stval;
     const is_interrupt = (scause >> 63) != 0;
     const code = scause & ~(@as(u64, 1) << 63);
 
     if (is_interrupt) {
-        log.err("unexpected nested interrupt (cause={})", .{code});
+        log.err("unexpected nested interrupt (cause={}) at SEPC=0x{x}", .{ code, nested_frame.sepc });
         arch.cpu.halt();
     }
 
     switch (code) {
         12, 13, 15 => {
-            log.err("unresolved nested page fault (cause={}) at 0x{x}", .{ code, stval });
-            arch.cpu.halt();
+            if (arch.paging.syncHighHalfIfNeeded(stval)) return;
+
+            const view = resolveFaultView(stval);
+            const result = view.handlePageFault(stval);
+
+            if (result == .resolved) return;
+
+            const fault_code = faultFromResult(result);
+            const ic = InterruptsContext.current();
+
+            if (isInFramePush(nested_frame.sepc)) {
+                ic.pending_frame_fault = .{ .code = fault_code, .va = stval };
+                nested_frame.xregs[8] = @intFromPtr(&ic.scratch_frame.reduced_frame);
+                return;
+            }
+
+            if (isInExtendFrame(nested_frame.sepc)) {
+                const old_reduced: *const ReducedFrame = @ptrFromInt(
+                    nested_frame.xregs[8] + @offsetOf(ExtendedFrame, "reduced_frame"),
+                );
+                ic.scratch_frame.reduced_frame = old_reduced.*;
+                ic.pending_frame_fault = .{ .code = fault_code, .va = stval };
+                nested_frame.xregs[8] = @intFromPtr(&ic.scratch_frame);
+                return;
+            }
+
+            faultCurrentTask(fault_code, stval, nested_frame.sepc, true);
+            restoreCurrent(&ic.scratch_frame.reduced_frame, .via_ret);
         },
         else => {
-            log.err("unexpected nested synchronous trap (cause={})", .{code});
+            log.err("unexpected nested synchronous trap (cause={}) at SEPC=0x{x}", .{ code, nested_frame.sepc });
             arch.cpu.halt();
         },
     }
@@ -215,6 +344,7 @@ pub fn init() !void {
 }
 
 pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
+    cpu_context.interrupts_context.trap_anchor.cpu_context = @intFromPtr(cpu_context);
     arch.registers.csrWrite("sscratch", @intFromPtr(&cpu_context.interrupts_context.trap_anchor));
     arch.cpu.setPerCpu(@intFromPtr(cpu_context));
 
@@ -225,8 +355,15 @@ pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
     sstatus.store();
 }
 
+pub const PendingFrameFault = struct {
+    code: sched.Task.Fault,
+    va: u64,
+};
+
 pub const InterruptsContext = struct {
     trap_anchor: TrapAnchor = undefined,
+    pending_frame_fault: ?PendingFrameFault = null,
+    scratch_frame: ExtendedFrame align(16) = undefined,
 
     pub fn init(self: *InterruptsContext) !void {
         const stack_size = 512 * 1024;
@@ -236,10 +373,18 @@ pub const InterruptsContext = struct {
         self.trap_anchor = .{
             .cpu_context = 0,
             .kernel_stack_top = kernel_stack_top,
+            .scratch_a0 = 0,
             .scratch_t1 = 0,
             .scratch_t2 = 0,
             .in_handler = 0,
         };
+        self.pending_frame_fault = null;
+    }
+
+    pub inline fn takePendingFrameFault(self: *InterruptsContext) ?PendingFrameFault {
+        const pf = self.pending_frame_fault;
+        self.pending_frame_fault = null;
+        return pf;
     }
 
     pub fn current() *InterruptsContext {
@@ -248,17 +393,38 @@ pub const InterruptsContext = struct {
 
     pub fn updateHhdm(self: *InterruptsContext) void {
         self.trap_anchor.kernel_stack_top = @intFromPtr(mem.updatePtr(anyopaque, @ptrFromInt(self.trap_anchor.kernel_stack_top)));
+        if (self.trap_anchor.cpu_context != 0) {
+            self.trap_anchor.cpu_context = @intFromPtr(mem.updatePtr(anyopaque, @ptrFromInt(self.trap_anchor.cpu_context)));
+        }
 
         if (kernel.cpu.CpuContext.current()) |ctx| {
             if (&ctx.interrupts_context == self) {
+                const new_ctx = mem.updatePtr(kernel.cpu.CpuContext, ctx);
+                self.trap_anchor.cpu_context = @intFromPtr(new_ctx);
                 arch.registers.csrWrite("sscratch", @intFromPtr(&self.trap_anchor));
-                arch.cpu.setPerCpu(@intFromPtr(ctx));
+                arch.cpu.setPerCpu(@intFromPtr(new_ctx));
             }
         }
     }
 };
 
 // --- //
+
+pub const NestedFrame = extern struct {
+    xregs: [30]u64, // ra, gp, tp, t0-2, s0-1, a0-7, s2-11, t3-6
+    sepc: u64,
+    sstatus: u64,
+    scause: u64,
+    stval: u64,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(NestedFrame) == 272);
+    std.debug.assert(@offsetOf(NestedFrame, "sepc") == 240);
+    std.debug.assert(@offsetOf(NestedFrame, "sstatus") == 248);
+    std.debug.assert(@offsetOf(NestedFrame, "scause") == 256);
+    std.debug.assert(@offsetOf(NestedFrame, "stval") == 264);
+}
 
 pub const ReducedFrame = extern struct {
     xregs: [30]u64, // ra, gp, tp, t0-2, s0-1, a0-7, s2-11, t3-6 (x2/sp excluded, dedicated field)
@@ -309,6 +475,9 @@ const FrameState = union(enum) {
             .reduced_frame => |f| blk: {
                 const extended = extend_frame(f);
                 self.* = .{ .extended_frame = extended };
+                if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+                    faultCurrentTask(pf.code, pf.va, extended.reduced_frame.program_counter, true);
+                }
                 break :blk extended;
             },
             .extended_frame => |f| f,

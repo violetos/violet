@@ -12,135 +12,151 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-.equ GEN_SIZE,   256
+.equ GEN_SIZE, 256
 .equ OFF_GEN_PC, 240
 .equ OFF_GEN_SP, 248
 
-.equ EXT_SIZE,     528
+.equ EXT_SIZE, 528
 .equ OFF_EXT_FCSR, 256
-.equ OFF_EXT_GEN,  272
+.equ OFF_EXT_GEN, 272
 
-.equ NESTED_SIZE,  256
-.equ NOFF_SEPC,    240
+.equ NESTED_SIZE, 272
+.equ NOFF_SEPC, 240
 .equ NOFF_SSTATUS, 248
+.equ NOFF_SCAUSE, 256
+.equ NOFF_STVAL, 264
 
 .equ ANCHOR_CPU_CONTEXT, 0
-.equ ANCHOR_KSP,         8
-.equ ANCHOR_SCRATCH_T1,  16
-.equ ANCHOR_SCRATCH_T2,  24
-.equ ANCHOR_IN_HANDLER,  32
+.equ ANCHOR_KSP, 8
+.equ ANCHOR_SCRATCH_A0, 16
+.equ ANCHOR_SCRATCH_T1, 24
+.equ ANCHOR_SCRATCH_T2, 32
+.equ ANCHOR_IN_HANDLER, 40
 
 .section .text
 
-.macro STORE_REDUCED
-    sd ra,  (8*0)(sp)
-    sd gp,  (8*1)(sp)
-    sd tp,  (8*2)(sp)
-    sd t0,  (8*3)(sp)
-    sd t1,  (8*4)(sp)
-    sd t2,  (8*5)(sp)
-    sd s0,  (8*6)(sp)
-    sd s1,  (8*7)(sp)
-    sd a0,  (8*8)(sp)
-    sd a1,  (8*9)(sp)
-    sd a2,  (8*10)(sp)
-    sd a3,  (8*11)(sp)
-    sd a4,  (8*12)(sp)
-    sd a5,  (8*13)(sp)
-    sd a6,  (8*14)(sp)
-    sd a7,  (8*15)(sp)
-    sd s2,  (8*16)(sp)
-    sd s3,  (8*17)(sp)
-    sd s4,  (8*18)(sp)
-    sd s5,  (8*19)(sp)
-    sd s6,  (8*20)(sp)
-    sd s7,  (8*21)(sp)
-    sd s8,  (8*22)(sp)
-    sd s9,  (8*23)(sp)
-    sd s10, (8*24)(sp)
-    sd s11, (8*25)(sp)
-    sd t3,  (8*26)(sp)
-    sd t4,  (8*27)(sp)
-    sd t5,  (8*28)(sp)
-    sd t6,  (8*29)(sp)
+
+.macro STORE_REDUCED_AT_A0
+    sd ra, (8*0)(a0)
+    sd gp, (8*1)(a0)
+    sd tp, (8*2)(a0)
+    sd t0, (8*3)(a0)
+    sd t1, (8*4)(a0)
+    sd t2, (8*5)(a0)
+    sd s0, (8*6)(a0)
+    sd s1, (8*7)(a0)
+    sd a1, (8*9)(a0)
+    sd a2, (8*10)(a0)
+    sd a3, (8*11)(a0)
+    sd a4, (8*12)(a0)
+    sd a5, (8*13)(a0)
+    sd a6, (8*14)(a0)
+    sd a7, (8*15)(a0)
+    sd s2, (8*16)(a0)
+    sd s3, (8*17)(a0)
+    sd s4, (8*18)(a0)
+    sd s5, (8*19)(a0)
+    sd s6, (8*20)(a0)
+    sd s7, (8*21)(a0)
+    sd s8, (8*22)(a0)
+    sd s9, (8*23)(a0)
+    sd s10, (8*24)(a0)
+    sd s11, (8*25)(a0)
+    sd t3, (8*26)(a0)
+    sd t4, (8*27)(a0)
+    sd t5, (8*28)(a0)
+    sd t6, (8*29)(a0)
 .endm
 
 .macro LOAD_REDUCED_EXCEPT_SP_A0
-    ld ra,  (8*0)(a0)
-    ld gp,  (8*1)(a0)
-    ld tp,  (8*2)(a0)
-    ld t0,  (8*3)(a0)
-    ld t1,  (8*4)(a0)
-    ld t2,  (8*5)(a0)
-    ld s0,  (8*6)(a0)
-    ld s1,  (8*7)(a0)
-    ld a1,  (8*9)(a0)
-    ld a2,  (8*10)(a0)
-    ld a3,  (8*11)(a0)
-    ld a4,  (8*12)(a0)
-    ld a5,  (8*13)(a0)
-    ld a6,  (8*14)(a0)
-    ld a7,  (8*15)(a0)
-    ld s2,  (8*16)(a0)
-    ld s3,  (8*17)(a0)
-    ld s4,  (8*18)(a0)
-    ld s5,  (8*19)(a0)
-    ld s6,  (8*20)(a0)
-    ld s7,  (8*21)(a0)
-    ld s8,  (8*22)(a0)
-    ld s9,  (8*23)(a0)
+    ld ra, (8*0)(a0)
+    ld gp, (8*1)(a0)
+    ld tp, (8*2)(a0)
+    ld t0, (8*3)(a0)
+    ld t1, (8*4)(a0)
+    ld t2, (8*5)(a0)
+    ld s0, (8*6)(a0)
+    ld s1, (8*7)(a0)
+    ld a1, (8*9)(a0)
+    ld a2, (8*10)(a0)
+    ld a3, (8*11)(a0)
+    ld a4, (8*12)(a0)
+    ld a5, (8*13)(a0)
+    ld a6, (8*14)(a0)
+    ld a7, (8*15)(a0)
+    ld s2, (8*16)(a0)
+    ld s3, (8*17)(a0)
+    ld s4, (8*18)(a0)
+    ld s5, (8*19)(a0)
+    ld s6, (8*20)(a0)
+    ld s7, (8*21)(a0)
+    ld s8, (8*22)(a0)
+    ld s9, (8*23)(a0)
     ld s10, (8*24)(a0)
     ld s11, (8*25)(a0)
-    ld t3,  (8*26)(a0)
-    ld t4,  (8*27)(a0)
-    ld t5,  (8*28)(a0)
-    ld t6,  (8*29)(a0)
+    ld t3, (8*26)(a0)
+    ld t4, (8*27)(a0)
+    ld t5, (8*28)(a0)
+    ld t6, (8*29)(a0)
 .endm
 
 .global call_system
+.global call_system_end
 .type call_system, %function
 call_system:
-    csrr t0, sscratch
-    li   t1, 1
-    sd   t1, ANCHOR_IN_HANDLER(t0)
-
     csrci sstatus, 2
 
-    addi sp, sp, -GEN_SIZE
-    STORE_REDUCED
+    csrr t0, sscratch
+    li t1, 1
+    sd t1, ANCHOR_IN_HANDLER(t0)
 
-    addi t0, sp, GEN_SIZE
-    sd t0, OFF_GEN_SP(sp)
+    mv t1, sp
+    ld sp, ANCHOR_KSP(t0)
 
-    sd ra, OFF_GEN_PC(sp)
+    addi sp, sp, -32
+    sd a0, 0(sp)
+    sd t1, 8(sp)
 
-    mv a0, sp
+    addi a0, t1, -GEN_SIZE
+
+    sd t1, OFF_GEN_SP(a0)
+    sd ra, OFF_GEN_PC(a0)
+    STORE_REDUCED_AT_A0
+
+    ld t2, 0(sp)
+    sd t2, (8*8)(a0)
+call_system_end:
+
+    sd a0, 16(sp)
+
     call internal_entry
 
-    mv a0, sp
+    ld a0, 16(sp)
     call internal_call_system
 
-    mv a0, sp
+    ld a0, 16(sp)
+    addi sp, sp, 32
     tail internal_exit
 
 .option push
 .option arch, +f, +d
 
 .global extend_frame
+.global extend_frame_end
 .type extend_frame, %function
 extend_frame:
     addi a0, a0, -OFF_EXT_GEN
 
-    fsd f0,  (8*0)(a0)
-    fsd f1,  (8*1)(a0)
-    fsd f2,  (8*2)(a0)
-    fsd f3,  (8*3)(a0)
-    fsd f4,  (8*4)(a0)
-    fsd f5,  (8*5)(a0)
-    fsd f6,  (8*6)(a0)
-    fsd f7,  (8*7)(a0)
-    fsd f8,  (8*8)(a0)
-    fsd f9,  (8*9)(a0)
+    fsd f0, (8*0)(a0)
+    fsd f1, (8*1)(a0)
+    fsd f2, (8*2)(a0)
+    fsd f3, (8*3)(a0)
+    fsd f4, (8*4)(a0)
+    fsd f5, (8*5)(a0)
+    fsd f6, (8*6)(a0)
+    fsd f7, (8*7)(a0)
+    fsd f8, (8*8)(a0)
+    fsd f9, (8*9)(a0)
     fsd f10, (8*10)(a0)
     fsd f11, (8*11)(a0)
     fsd f12, (8*12)(a0)
@@ -166,22 +182,22 @@ extend_frame:
 
     frcsr t0
     sd t0, OFF_EXT_FCSR(a0)
-
+extend_frame_end:
     ret
 
 .global restore_extended_via_sret
 .type restore_extended_via_sret, %function
 restore_extended_via_sret:
-    fld f0,  (8*0)(a0)
-    fld f1,  (8*1)(a0)
-    fld f2,  (8*2)(a0)
-    fld f3,  (8*3)(a0)
-    fld f4,  (8*4)(a0)
-    fld f5,  (8*5)(a0)
-    fld f6,  (8*6)(a0)
-    fld f7,  (8*7)(a0)
-    fld f8,  (8*8)(a0)
-    fld f9,  (8*9)(a0)
+    fld f0, (8*0)(a0)
+    fld f1, (8*1)(a0)
+    fld f2, (8*2)(a0)
+    fld f3, (8*3)(a0)
+    fld f4, (8*4)(a0)
+    fld f5, (8*5)(a0)
+    fld f6, (8*6)(a0)
+    fld f7, (8*7)(a0)
+    fld f8, (8*8)(a0)
+    fld f9, (8*9)(a0)
     fld f10, (8*10)(a0)
     fld f11, (8*11)(a0)
     fld f12, (8*12)(a0)
@@ -214,16 +230,16 @@ restore_extended_via_sret:
 .global restore_extended_via_ret
 .type restore_extended_via_ret, %function
 restore_extended_via_ret:
-    fld f0,  (8*0)(a0)
-    fld f1,  (8*1)(a0)
-    fld f2,  (8*2)(a0)
-    fld f3,  (8*3)(a0)
-    fld f4,  (8*4)(a0)
-    fld f5,  (8*5)(a0)
-    fld f6,  (8*6)(a0)
-    fld f7,  (8*7)(a0)
-    fld f8,  (8*8)(a0)
-    fld f9,  (8*9)(a0)
+    fld f0, (8*0)(a0)
+    fld f1, (8*1)(a0)
+    fld f2, (8*2)(a0)
+    fld f3, (8*3)(a0)
+    fld f4, (8*4)(a0)
+    fld f5, (8*5)(a0)
+    fld f6, (8*6)(a0)
+    fld f7, (8*7)(a0)
+    fld f8, (8*8)(a0)
+    fld f9, (8*9)(a0)
     fld f10, (8*10)(a0)
     fld f11, (8*11)(a0)
     fld f12, (8*12)(a0)
@@ -259,7 +275,7 @@ restore_extended_via_ret:
 .type restore_reduced_via_sret, %function
 restore_reduced_via_sret:
     csrr t0, sscratch
-    sd   zero, ANCHOR_IN_HANDLER(t0)
+    sd zero, ANCHOR_IN_HANDLER(t0)
 
     ld t0, OFF_GEN_PC(a0)
     csrw sepc, t0
@@ -276,7 +292,7 @@ restore_reduced_via_sret:
 .type restore_reduced_via_ret, %function
 restore_reduced_via_ret:
     csrr t0, sscratch
-    sd   zero, ANCHOR_IN_HANDLER(t0)
+    sd zero, ANCHOR_IN_HANDLER(t0)
 
     ld t1, OFF_GEN_SP(a0)
     mv sp, t1
@@ -289,94 +305,121 @@ restore_reduced_via_ret:
 
 .balign 4
 .global trap_vector
+.global trap_push_start
+.global trap_push_end
 .type trap_vector, %function
 trap_vector:
     csrrw t0, sscratch, t0
-    sd    t1, ANCHOR_SCRATCH_T1(t0)
-    sd    t2, ANCHOR_SCRATCH_T2(t0)
+    sd t1, ANCHOR_SCRATCH_T1(t0)
+    sd t2, ANCHOR_SCRATCH_T2(t0)
 
-    ld    t1, ANCHOR_IN_HANDLER(t0)
-    bnez  t1, 2f
+    ld t1, ANCHOR_IN_HANDLER(t0)
+    bnez t1, 2f
 
-    li    t1, 1
-    sd    t1, ANCHOR_IN_HANDLER(t0)
+    li t1, 1
+    sd t1, ANCHOR_IN_HANDLER(t0)
+    sd a0, ANCHOR_SCRATCH_A0(t0)
 
-    mv    t2, sp
-    addi  sp, t2, -GEN_SIZE
-    STORE_REDUCED
+    csrr t2, sscratch
+    csrw sscratch, t0
 
-    sd    t2, OFF_GEN_SP(sp)
+    mv t1, sp
+    ld sp, ANCHOR_KSP(t0)
 
-    ld    t2, ANCHOR_SCRATCH_T2(t0)
-    sd    t2, (8*5)(sp)
-    ld    t2, ANCHOR_SCRATCH_T1(t0)
-    sd    t2, (8*4)(sp)
-    csrr  t2, sscratch
-    sd    t2, (8*3)(sp)
+    addi sp, sp, -64
+    sd t1, 0(sp)                        // [sp + 0]  = task_sp
+    sd t2, 8(sp)                        // [sp + 8]  = orig_t0
+    ld t2, ANCHOR_SCRATCH_T1(t0)
+    sd t2, 16(sp)                       // [sp + 16] = orig_t1
+    ld t2, ANCHOR_SCRATCH_T2(t0)
+    sd t2, 24(sp)                       // [sp + 24] = orig_t2
+    ld t2, ANCHOR_SCRATCH_A0(t0)
+    sd t2, 32(sp)                       // [sp + 32] = orig_a0
+    csrr t2, sepc
+    sd t2, 40(sp)                       // [sp + 40] = outer sepc
+    csrr t2, sstatus
+    sd t2, 48(sp)                       // [sp + 48] = outer sstatus
+    csrr t2, scause
+    sd t2, 56(sp)                       // [sp + 56] = outer scause
 
-    csrw  sscratch, t0
+    addi a0, t1, -GEN_SIZE
 
-    csrr  t2, sepc
-    sd    t2, OFF_GEN_PC(sp)
+trap_push_start:
+    sd t1, OFF_GEN_SP(a0)
+    STORE_REDUCED_AT_A0
 
-    ld    t2, ANCHOR_CPU_CONTEXT(t0)
-    mv    tp, t2
+    ld t2, 8(sp)
+    sd t2, (8*3)(a0)                    // orig_t0
+    ld t2, 16(sp)
+    sd t2, (8*4)(a0)                    // orig_t1
+    ld t2, 24(sp)
+    sd t2, (8*5)(a0)                    // orig_t2
+    ld t2, 32(sp)
+    sd t2, (8*8)(a0)                    // orig_a0
+    ld t2, 40(sp)
+    sd t2, OFF_GEN_PC(a0)               // outer sepc
+trap_push_end:
 
-    mv    a0, sp
-    csrr  a1, sstatus
+    // Set `tp` to the per-CPU `CpuContext` pointer now that task `tp` is saved.
+    csrr t0, sscratch
+    ld tp, ANCHOR_CPU_CONTEXT(t0)
 
-    ld    t2, ANCHOR_KSP(t0)
-    mv    sp, t2
+    ld a1, 48(sp)                       // a1 = outer sstatus
+    ld a2, 56(sp)                       // a2 = outer scause
+    addi sp, sp, 64
 
-    tail  trap_top_level
+    tail trap_top_level
 
 2:
-    ld    t2, ANCHOR_SCRATCH_T2(t0)
-    ld    t1, ANCHOR_SCRATCH_T1(t0)
+    ld t2, ANCHOR_SCRATCH_T2(t0)
+    ld t1, ANCHOR_SCRATCH_T1(t0)
     csrrw t0, sscratch, t0
-    j     nested_entry
+    j nested_entry
 
 nested_entry:
     addi sp, sp, -NESTED_SIZE
 
-    sd ra,  (8*0)(sp)
-    sd gp,  (8*1)(sp)
-    sd tp,  (8*2)(sp)
-    sd t0,  (8*3)(sp)
-    sd t1,  (8*4)(sp)
-    sd t2,  (8*5)(sp)
-    sd s0,  (8*6)(sp)
-    sd s1,  (8*7)(sp)
-    sd a0,  (8*8)(sp)
-    sd a1,  (8*9)(sp)
-    sd a2,  (8*10)(sp)
-    sd a3,  (8*11)(sp)
-    sd a4,  (8*12)(sp)
-    sd a5,  (8*13)(sp)
-    sd a6,  (8*14)(sp)
-    sd a7,  (8*15)(sp)
-    sd s2,  (8*16)(sp)
-    sd s3,  (8*17)(sp)
-    sd s4,  (8*18)(sp)
-    sd s5,  (8*19)(sp)
-    sd s6,  (8*20)(sp)
-    sd s7,  (8*21)(sp)
-    sd s8,  (8*22)(sp)
-    sd s9,  (8*23)(sp)
+    sd ra, (8*0)(sp)
+    sd gp, (8*1)(sp)
+    sd tp, (8*2)(sp)
+    sd t0, (8*3)(sp)
+    sd t1, (8*4)(sp)
+    sd t2, (8*5)(sp)
+    sd s0, (8*6)(sp)
+    sd s1, (8*7)(sp)
+    sd a0, (8*8)(sp)
+    sd a1, (8*9)(sp)
+    sd a2, (8*10)(sp)
+    sd a3, (8*11)(sp)
+    sd a4, (8*12)(sp)
+    sd a5, (8*13)(sp)
+    sd a6, (8*14)(sp)
+    sd a7, (8*15)(sp)
+    sd s2, (8*16)(sp)
+    sd s3, (8*17)(sp)
+    sd s4, (8*18)(sp)
+    sd s5, (8*19)(sp)
+    sd s6, (8*20)(sp)
+    sd s7, (8*21)(sp)
+    sd s8, (8*22)(sp)
+    sd s9, (8*23)(sp)
     sd s10, (8*24)(sp)
     sd s11, (8*25)(sp)
-    sd t3,  (8*26)(sp)
-    sd t4,  (8*27)(sp)
-    sd t5,  (8*28)(sp)
-    sd t6,  (8*29)(sp)
+    sd t3, (8*26)(sp)
+    sd t4, (8*27)(sp)
+    sd t5, (8*28)(sp)
+    sd t6, (8*29)(sp)
 
     csrr t0, sepc
-    sd   t0, NOFF_SEPC(sp)
+    sd t0, NOFF_SEPC(sp)
     csrr t0, sstatus
-    sd   t0, NOFF_SSTATUS(sp)
+    sd t0, NOFF_SSTATUS(sp)
+    csrr t0, scause
+    sd t0, NOFF_SCAUSE(sp)
+    csrr t0, stval
+    sd t0, NOFF_STVAL(sp)
 
-    csrr a0, scause
-    csrr a1, stval
+    mv a0, sp
     call trap_nested
 
     ld t0, NOFF_SEPC(sp)
@@ -384,36 +427,36 @@ nested_entry:
     ld t0, NOFF_SSTATUS(sp)
     csrw sstatus, t0
 
-    ld ra,  (8*0)(sp)
-    ld gp,  (8*1)(sp)
-    ld tp,  (8*2)(sp)
-    ld t0,  (8*3)(sp)
-    ld t1,  (8*4)(sp)
-    ld t2,  (8*5)(sp)
-    ld s0,  (8*6)(sp)
-    ld s1,  (8*7)(sp)
-    ld a0,  (8*8)(sp)
-    ld a1,  (8*9)(sp)
-    ld a2,  (8*10)(sp)
-    ld a3,  (8*11)(sp)
-    ld a4,  (8*12)(sp)
-    ld a5,  (8*13)(sp)
-    ld a6,  (8*14)(sp)
-    ld a7,  (8*15)(sp)
-    ld s2,  (8*16)(sp)
-    ld s3,  (8*17)(sp)
-    ld s4,  (8*18)(sp)
-    ld s5,  (8*19)(sp)
-    ld s6,  (8*20)(sp)
-    ld s7,  (8*21)(sp)
-    ld s8,  (8*22)(sp)
-    ld s9,  (8*23)(sp)
+    ld ra, (8*0)(sp)
+    ld gp, (8*1)(sp)
+    ld tp, (8*2)(sp)
+    ld t0, (8*3)(sp)
+    ld t1, (8*4)(sp)
+    ld t2, (8*5)(sp)
+    ld s0, (8*6)(sp)
+    ld s1, (8*7)(sp)
+    ld a0, (8*8)(sp)
+    ld a1, (8*9)(sp)
+    ld a2, (8*10)(sp)
+    ld a3, (8*11)(sp)
+    ld a4, (8*12)(sp)
+    ld a5, (8*13)(sp)
+    ld a6, (8*14)(sp)
+    ld a7, (8*15)(sp)
+    ld s2, (8*16)(sp)
+    ld s3, (8*17)(sp)
+    ld s4, (8*18)(sp)
+    ld s5, (8*19)(sp)
+    ld s6, (8*20)(sp)
+    ld s7, (8*21)(sp)
+    ld s8, (8*22)(sp)
+    ld s9, (8*23)(sp)
     ld s10, (8*24)(sp)
     ld s11, (8*25)(sp)
-    ld t3,  (8*26)(sp)
-    ld t4,  (8*27)(sp)
-    ld t5,  (8*28)(sp)
-    ld t6,  (8*29)(sp)
+    ld t3, (8*26)(sp)
+    ld t4, (8*27)(sp)
+    ld t5, (8*28)(sp)
+    ld t6, (8*29)(sp)
 
     addi sp, sp, NESTED_SIZE
 

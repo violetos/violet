@@ -22,8 +22,9 @@ const kernel = @import("root");
 
 const mem = kernel.mem;
 const utils = mem.utils;
-const sched = kernel.sched;
+const virt = mem.virt;
 
+const sched = kernel.sched;
 const Future = sched.Future;
 const Task = sched.Task;
 
@@ -34,15 +35,16 @@ const Map = utils.SlotMap(utils.Arc(Process));
 var map: Map = .{};
 pub const Id = Map.Handle;
 pub const Ref = Map.ArcRef;
+pub const New = Map.New;
 
 // --- //
 
-space: ?mem.virt.Space,
+view: mem.virt.View.Ref,
 
 lock: mem.utils.RwLock,
 task_head: ?Task.Ref,
 future_head: ?Future.Ref,
 
 pub fn isPrivileged(self: *const Process) bool {
-    return self.space == null;
+    return self.view.payload().space.index == mem.virt.kernel_space.index;
 }

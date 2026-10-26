@@ -31,6 +31,10 @@ const mem = kernel.mem;
 // --- asm --- //
 
 extern const exception_vector_table: [2048]u8 align(0x800) linksection(".text");
+extern const call_system_end: u8;
+extern const extend_frame_end: u8;
+extern const exception_handlers_start: u8;
+extern const exception_handlers_end: u8;
 
 extern fn call_system(code: basalt.system.call.Code, arg1: u64, arg2: u64, arg3: u64, arg4: u64, arg5: u64, arg6: u64, arg7: u64) callconv(.{ .aarch64_aapcs = .{} }) basalt.system.call.FullResult;
 
@@ -51,6 +55,7 @@ const ResumeMode = union(enum) {
 inline fn captureFrame(frame: *ReducedFrame, resume_mode: ResumeMode) void {
     const context = sched.SchedContext.current();
     if (context.current_task) |*task_ref| {
+        context.in_kernel = false;
         const task: *sched.Task = task_ref.payload();
 
         task.interrupt_data = .{
@@ -69,19 +74,37 @@ inline fn currentReducedFrame(fallback: *ReducedFrame) *ReducedFrame {
     return fallback;
 }
 
-fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
-    const interrupt_data = blk: {
-        const sched_context = sched.SchedContext.current();
+fn idleWaitForTask() noreturn {
+    const ic = InterruptsContext.current();
+    const scratch_top = @intFromPtr(&ic.scratch_frame.reduced_frame) + @sizeOf(ReducedFrame);
 
-        if (sched_context.current_task) |*task_ref| {
-            const task: *sched.Task = task_ref.payload();
-            break :blk task.interrupt_data;
-        } else {
-            break :blk InterruptData{
-                .frame_state = .{ .reduced_frame = old_frame },
-                .resume_mode = old_mode,
-            };
-        }
+    asm volatile (
+        \\ mov sp, %[ksp]
+        \\ msr sp_el0, %[usp]
+        \\ msr spsel, #0
+        :
+        : [ksp] "r" (ic.kernel_stack_top),
+          [usp] "r" (scratch_top),
+        : .{ .memory = true });
+
+    _ = set(.enabled);
+    arch.cpu.halt();
+}
+
+fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
+    const sched_context = sched.SchedContext.current();
+
+    const interrupt_data = if (sched_context.current_task) |*task_ref| blk: {
+        sched_context.in_kernel = false;
+        const task: *sched.Task = task_ref.payload();
+        break :blk task.interrupt_data;
+    } else if (sched_context.in_kernel) blk: {
+        break :blk InterruptData{
+            .frame_state = .{ .reduced_frame = old_frame },
+            .resume_mode = old_mode,
+        };
+    } else {
+        idleWaitForTask();
     };
 
     const kernel_stack_top = InterruptsContext.current().kernel_stack_top;
@@ -102,8 +125,74 @@ fn restoreCurrent(old_frame: *ReducedFrame, old_mode: ResumeMode) noreturn {
     }
 }
 
+// --- //
+
+inline fn resolveFaultView(fault_va: u64) *mem.virt.View {
+    const context = sched.SchedContext.current();
+    if (context.current_task) |*task_ref| {
+        const task: *sched.Task = task_ref.payload();
+        const process = task.process.payload();
+        const proc_view: *mem.virt.View = process.view.payload();
+
+        if (proc_view.space.payload().half.contains(fault_va, fault_va +| 1)) {
+            return proc_view;
+        }
+    }
+    return mem.virt.kernel_view.payload();
+}
+
+inline fn faultFromResult(result: mem.virt.Space.FaultResult) sched.Task.Fault {
+    return switch (result) {
+        .guard_violation => .stack_overflow,
+        .unmapped => .unmapped_memory,
+        .access_violation => .access_violation,
+        .out_of_memory => .out_of_memory,
+        .resolved => unreachable,
+    };
+}
+
+fn faultCurrentTask(code: sched.Task.Fault, fault_va: u64, pc: u64, is_nested: bool) void {
+    const context = sched.SchedContext.current();
+    if (context.current_task) |*task_ref| {
+        const task: *sched.Task = task_ref.payload();
+        log.err(
+            "task fault ({s}, nested={}) at 0x{x} (PC=0x{x})",
+            .{ @tagName(code), is_nested, fault_va, pc },
+        );
+        task.fault(code);
+    } else {
+        std.debug.panic(
+            "fatal kernel fault ({s}, nested={}) at 0x{x} (PC=0x{x}) with no active task",
+            .{ @tagName(code), is_nested, fault_va, pc },
+        );
+    }
+}
+
+inline fn isInFramePush(pc: u64) bool {
+    const cs_start = @intFromPtr(&call_system);
+    const cs_end = @intFromPtr(&call_system_end);
+    if (pc >= cs_start and pc < cs_end) return true;
+
+    const eh_start = @intFromPtr(&exception_handlers_start);
+    const eh_end = @intFromPtr(&exception_handlers_end);
+    return (pc >= eh_start and pc < eh_end);
+}
+
+inline fn isInExtendFrame(pc: u64) bool {
+    const ext_start = @intFromPtr(&extend_frame);
+    const ext_end = @intFromPtr(&extend_frame_end);
+    return (pc >= ext_start and pc < ext_end);
+}
+
+// --- //
+
 export fn internal_entry(frame: *ReducedFrame) callconv(.{ .aarch64_aapcs = .{} }) void {
     captureFrame(frame, .via_ret);
+
+    if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+        faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+        restoreCurrent(frame, .via_ret);
+    }
 }
 
 export fn internal_exit(old_frame: *ReducedFrame) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
@@ -113,6 +202,11 @@ export fn internal_exit(old_frame: *ReducedFrame) callconv(.{ .aarch64_aapcs = .
 fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     captureFrame(frame, .{ .via_eret = saved_spsr });
 
+    if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+        faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+        restoreCurrent(frame, .{ .via_eret = saved_spsr });
+    }
+
     const esr = arch.registers.ESR.load();
 
     switch (esr.ec) {
@@ -121,7 +215,8 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.
             const privileged = if (context.current_task) |*task| task.payload().process.payload().isPrivileged() else true;
             if (privileged) {
                 log.err("unexpected svc trapped from a privileged (EL1t) task", .{});
-                arch.cpu.halt();
+                faultCurrentTask(.illegal_syscall, 0, frame.program_counter, false);
+                restoreCurrent(frame, .{ .via_eret = saved_spsr });
             }
 
             kernel.syscall.internal_call_system(frame);
@@ -129,17 +224,11 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.
 
         .data_abort_lower_el, .data_abort_same_el, .inst_abort_lower_el, .inst_abort_same_el => {
             const far = arch.registers.loadFarEl1();
-            const iss = esr.iss.data_abort;
+            const view = resolveFaultView(far);
+            const result = view.handlePageFault(far);
 
-            switch (iss.dfsc) {
-                .translation_fault_lv0, .translation_fault_lv1, .translation_fault_lv2, .translation_fault_lv3 => {
-                    log.err("unresolved translation fault at 0x{x}", .{far});
-                    arch.cpu.halt();
-                },
-                else => {
-                    log.err("unhandled data/inst abort ({s}) at 0x{x}", .{ @tagName(iss.dfsc), far });
-                    arch.cpu.halt();
-                },
+            if (result != .resolved) {
+                faultCurrentTask(faultFromResult(result), far, frame.program_counter, false);
             }
         },
 
@@ -151,9 +240,9 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.
         },
 
         else => {
-            log.err("unexpected synchronous exception", .{});
+            log.err("unexpected synchronous exception at PC=0x{x}", .{frame.program_counter});
             esr.dump();
-            arch.cpu.halt();
+            faultCurrentTask(.unexpected_exception, 0, frame.program_counter, false);
         },
     }
 
@@ -162,6 +251,10 @@ fn syncHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.
 
 fn irqHandler(frame: *ReducedFrame, saved_spsr: arch.registers.SPSR) callconv(.{ .aarch64_aapcs = .{} }) noreturn {
     captureFrame(frame, .{ .via_eret = saved_spsr });
+
+    if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+        faultCurrentTask(pf.code, pf.va, frame.program_counter, true);
+    }
 
     drivers.intc.handle() catch |err| {
         log.warn("unhandled interrupt: {s}", .{@errorName(err)});
@@ -178,34 +271,52 @@ fn unexpectedException(_: *ReducedFrame, saved_spsr: arch.registers.SPSR) callco
     arch.cpu.halt();
 }
 
-fn nestedSyncHandler(esr_raw: u64, far: u64) callconv(.{ .aarch64_aapcs = .{} }) void {
-    const esr: arch.registers.ESR = @bitCast(esr_raw);
+fn nestedSyncHandler(nested_frame: *NestedFrame) callconv(.{ .aarch64_aapcs = .{} }) void {
+    const esr: arch.registers.ESR = @bitCast(nested_frame.esr);
+    const far = nested_frame.far;
 
     switch (esr.ec) {
-        .data_abort_same_el, .data_abort_lower_el => {
-            const iss = esr.iss.data_abort;
-            switch (iss.dfsc) {
-                .translation_fault_lv0, .translation_fault_lv1, .translation_fault_lv2, .translation_fault_lv3 => {
-                    log.err("unresolved nested translation fault at 0x{x}", .{far});
-                    arch.cpu.halt();
-                },
-                else => {
-                    log.err("unhandled nested data/inst abort ({s}) at 0x{x}", .{ @tagName(iss.dfsc), far });
-                    arch.cpu.halt();
-                },
+        .data_abort_same_el, .data_abort_lower_el, .inst_abort_same_el, .inst_abort_lower_el => {
+            const view = resolveFaultView(far);
+            const result = view.handlePageFault(far);
+
+            if (result == .resolved) return;
+
+            const fault_code = faultFromResult(result);
+            const ic = InterruptsContext.current();
+
+            if (isInFramePush(nested_frame.elr)) {
+                const scratch_reduced = &ic.scratch_frame.reduced_frame;
+                ic.pending_frame_fault = .{ .code = fault_code, .va = far };
+                nested_frame.xregs[0] = @intFromPtr(scratch_reduced);
+                arch.registers.storeSpEl0(@intFromPtr(scratch_reduced));
+                return;
             }
+
+            if (isInExtendFrame(nested_frame.elr)) {
+                const old_reduced: *const ReducedFrame = @ptrFromInt(
+                    nested_frame.xregs[0] + @offsetOf(ExtendedFrame, "reduced_frame"),
+                );
+                ic.scratch_frame.reduced_frame = old_reduced.*;
+                ic.pending_frame_fault = .{ .code = fault_code, .va = far };
+                nested_frame.xregs[0] = @intFromPtr(&ic.scratch_frame);
+                return;
+            }
+
+            faultCurrentTask(fault_code, far, nested_frame.elr, true);
+            restoreCurrent(&ic.scratch_frame.reduced_frame, .via_ret);
         },
         else => {
-            log.err("unexpected nested synchronous exception", .{});
+            log.err("unexpected nested synchronous exception at ELR=0x{x}", .{nested_frame.elr});
             esr.dump();
             arch.cpu.halt();
         },
     }
 }
 
-fn unexpectedNestedException(esr_raw: u64, _: u64) callconv(.{ .aarch64_aapcs = .{} }) void {
-    const esr: arch.registers.ESR = @bitCast(esr_raw);
-    log.err("unexpected nested exception (irq/fiq/serror)", .{});
+fn unexpectedNestedException(nested_frame: *NestedFrame) callconv(.{ .aarch64_aapcs = .{} }) void {
+    const esr: arch.registers.ESR = @bitCast(nested_frame.esr);
+    log.err("unexpected nested exception (irq/fiq/serror) at ELR=0x{x}", .{nested_frame.elr});
     esr.dump();
     arch.cpu.halt();
 }
@@ -257,13 +368,27 @@ pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
     arch.registers.storeSpEl1(cpu_context.interrupts_context.kernel_stack_top);
 }
 
+pub const PendingFrameFault = struct {
+    code: sched.Task.Fault,
+    va: u64,
+};
+
 pub const InterruptsContext = struct {
     kernel_stack_top: u64,
+    pending_frame_fault: ?PendingFrameFault = null,
+    scratch_frame: ExtendedFrame align(16) = undefined,
 
     pub fn init(self: *InterruptsContext) !void {
         const stack_size = 512 * 1024; // 512 KiB
         const pages_count = stack_size / mem.paging.page_size;
         self.kernel_stack_top = (mem.hhdm_offset + try mem.phys.allocContiguous(pages_count)) + stack_size;
+        self.pending_frame_fault = null;
+    }
+
+    pub inline fn takePendingFrameFault(self: *InterruptsContext) ?PendingFrameFault {
+        const pf = self.pending_frame_fault;
+        self.pending_frame_fault = null;
+        return pf;
     }
 
     pub fn current() *InterruptsContext {
@@ -283,6 +408,25 @@ pub const InterruptsContext = struct {
 };
 
 // --- //
+
+pub const NestedFrame = extern struct {
+    xregs: [30]u64, // x0..x29
+    link_register: u64, // x30
+    elr: u64, // elr_el1
+    spsr: u64, // spsr_el1
+    esr: u64, // esr_el1
+    far: u64, // far_el1
+    _reserved: u64 = 0,
+};
+
+comptime {
+    std.debug.assert(@sizeOf(NestedFrame) == 288);
+    std.debug.assert(@offsetOf(NestedFrame, "link_register") == 240);
+    std.debug.assert(@offsetOf(NestedFrame, "elr") == 248);
+    std.debug.assert(@offsetOf(NestedFrame, "spsr") == 256);
+    std.debug.assert(@offsetOf(NestedFrame, "esr") == 264);
+    std.debug.assert(@offsetOf(NestedFrame, "far") == 272);
+}
 
 pub const ReducedFrame = extern struct {
     xregs: [30]u64, // x0..x29
@@ -341,6 +485,9 @@ const FrameState = union(enum) {
             .reduced_frame => |f| blk: {
                 const extended = extend_frame(f);
                 self.* = .{ .extended_frame = extended };
+                if (InterruptsContext.current().takePendingFrameFault()) |pf| {
+                    faultCurrentTask(pf.code, pf.va, extended.reduced_frame.program_counter, true);
+                }
                 break :blk extended;
             },
             .extended_frame => |f| f,

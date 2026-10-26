@@ -231,14 +231,25 @@ pub const PageTable = struct {
                         }
                         tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
                     },
+                    .uncommitted => |old_attrs| {
+                        if (result.level == 0) {
+                            old_had_global = old_attrs.permissions.global;
+                            invalidateLeaf(result.table_pa, result.index, 0, .{
+                                .physical_address = mem.zero_page_pa,
+                                .attributes = old_attrs,
+                            }, va);
+                        }
+                        tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
+                    },
                     else => {
                         tableSlice(result.table_pa)[result.index] = arch.paging.encode(result.level, new_entry);
                     },
                 }
 
-                if (needsFlush(result.entry, new_entry)) {
+                if (needsFlush(result.level, result.entry, new_entry)) {
                     const new_global = switch (new_entry) {
                         .leaf => |l| l.attributes.permissions.global,
+                        .uncommitted => |a| (result.level == 0) and a.permissions.global,
                         else => false,
                     };
                     if (flush_len < flush_all_threshold) {
@@ -518,13 +529,15 @@ fn nextEntry(query: *const Query, level: Level, current: Entry, target_pa: ?u64)
     };
 }
 
-inline fn needsFlush(old: Entry, new: Entry) bool {
+inline fn needsFlush(level: Level, old: Entry, new: Entry) bool {
     const old_present = switch (old) {
         .leaf, .table => true,
+        .uncommitted => level == 0,
         else => false,
     };
     const new_present = switch (new) {
         .leaf => true,
+        .uncommitted => level == 0,
         else => false,
     };
     return old_present or new_present;

@@ -209,24 +209,140 @@ pub fn activate(low_half_root: ?u64, high_half_root: u64) void {
     asm volatile ("sfence.vma zero, zero" ::: .{ .memory = true });
 }
 
-pub fn flush(scope: paging.FlushScope) void {
+pub const TLB_SHOOTDOWN_IPI: u64 = 15;
+
+var shootdown_lock: mem.utils.RwLock = .{};
+var shootdown_scope: paging.FlushScope = .all;
+var shootdown_pending_mask: std.atomic.Value(u64) = .init(0);
+
+inline fn rootIndexOf(va: u64) usize {
+    const top_level: paging.Level = paging.page_levels - 1;
+    const shift: u6 = @intCast(paging.offset_bits + @as(u64, top_level) * paging.bits_per_level);
+    return @intCast((va >> shift) & (paging.entries_per_table - 1));
+}
+
+pub fn syncHighHalfIfNeeded(fault_va: u64) bool {
+    if (fault_va < high_half_min) return false;
+
+    const high_root = mem.virt.kernel_pagetable;
+    if (high_root == 0) return false;
+
+    const current_root = getBootTable();
+    if (current_root == high_root) return false;
+
+    const idx = rootIndexOf(fault_va);
+    const low_table = mem.toHhdm([paging.entries_per_table]u64, current_root);
+    const high_table = mem.toHhdm([paging.entries_per_table]u64, high_root);
+
+    const k_pte = @atomicLoad(u64, &high_table[idx], .acquire);
+    const cur_pte = @atomicLoad(u64, &low_table[idx], .monotonic);
+
+    if (k_pte == 0 or cur_pte == k_pte) return false;
+
+    @atomicStore(u64, &low_table[idx], k_pte, .release);
+    asm volatile ("sfence.vma zero, zero" ::: .{ .memory = true });
+    return true;
+}
+
+pub fn cleanLowHalfRoot(low_root_pa: u64) void {
+    const root_entries = paging.entries_per_table;
+    const half = root_entries / 2;
+    const low_table = mem.toHhdm([paging.entries_per_table]u64, low_root_pa);
+    @memset(low_table[half..root_entries], 0);
+}
+
+pub inline fn flushLocal(scope: paging.FlushScope) void {
     switch (scope) {
         .all => {
             asm volatile ("sfence.vma zero, zero" ::: .{ .memory = true });
         },
         .address => |addr| {
-            if (addr.global) {
-                asm volatile ("sfence.vma %[va], zero"
-                    :
-                    : [va] "r" (addr.va),
-                    : .{ .memory = true });
-            } else {
-                asm volatile ("sfence.vma %[va], zero"
-                    :
-                    : [va] "r" (addr.va),
-                    : .{ .memory = true });
-            }
+            asm volatile ("sfence.vma %[va], zero"
+                :
+                : [va] "r" (addr.va),
+                : .{ .memory = true });
         },
+    }
+}
+
+pub inline fn pollShootdown() void {
+    const ctx = kernel.cpu.CpuContext.current() orelse return;
+    const cpu_id: u6 = @intCast(ctx.index);
+    const my_bit = @as(u64, 1) << cpu_id;
+
+    if (shootdown_pending_mask.load(.acquire) & my_bit != 0) {
+        flushLocal(shootdown_scope);
+        _ = shootdown_pending_mask.fetchAnd(~my_bit, .release);
+    }
+}
+
+pub fn onShootdownIpi(_: *anyopaque) callconv(@import("basalt").system.call_conv) bool {
+    pollShootdown();
+    return true;
+}
+
+pub fn registerShootdownIpi() !void {
+    const ic_ref = try kernel.drivers.intc.getRootRef();
+    const ic = ic_ref.payload();
+
+    _ = try ic.register(ic_ref, .{
+        .hardware_irq = TLB_SHOOTDOWN_IPI,
+        .trigger_mode = .message,
+        .kind = .handler,
+        .priority = 0x10,
+        .content = .{
+            .handler = .{
+                .context = undefined,
+                .top_half = &onShootdownIpi,
+                .future = .null,
+            },
+        },
+    });
+}
+
+pub fn flush(scope: paging.FlushScope) void {
+    flushLocal(scope);
+
+    const online = kernel.cpu.onlineCount();
+    if (online <= 1) return;
+
+    const ctx = kernel.cpu.CpuContext.current() orelse return;
+    const self_id: u6 = @intCast(ctx.index);
+
+    const root_dom = kernel.drivers.intc.getRoot() catch return;
+    const send_ipi = root_dom.vtable.send_ipi orelse return;
+
+    var saved = shootdown_lock.tryAcquire(.write);
+    defer shootdown_lock.release(.write, saved.?);
+
+    while (saved == null) {
+        pollShootdown();
+        std.atomic.spinLoopHint();
+
+        saved = shootdown_lock.tryAcquire(.write);
+    }
+
+    const all_online_mask: u64 = if (online >= 64)
+        std.math.maxInt(u64)
+    else
+        (@as(u64, 1) << @intCast(online)) - 1;
+    const target_mask = all_online_mask & ~(@as(u64, 1) << self_id);
+    if (target_mask == 0) return;
+
+    shootdown_scope = scope;
+    shootdown_pending_mask.store(target_mask, .release);
+
+    const res = send_ipi(root_dom.context, TLB_SHOOTDOWN_IPI, .{
+        .filter = .mask,
+        .cpu_mask = target_mask,
+    });
+    if (res != .success) {
+        shootdown_pending_mask.store(0, .release);
+        return;
+    }
+
+    while (shootdown_pending_mask.load(.acquire) != 0) {
+        std.atomic.spinLoopHint();
     }
 }
 

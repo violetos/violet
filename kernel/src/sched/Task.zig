@@ -43,6 +43,8 @@ pub const New = Map.New;
 
 process: Process.Ref,
 
+state: std.atomic.Value(State) = .init(.alive),
+
 interrupt_data: arch.interrupts.InterruptData,
 
 lock: mem.utils.RwLock,
@@ -61,3 +63,32 @@ pub fn create(item: Task) !Task.New {
 pub fn get(id: Task.Id) ?Task.Ref {
     return map.get(id);
 }
+
+// --- //
+
+pub fn fault(self: *Task, code: Fault) void {
+    _ = self;
+
+    std.log.err("task faulted with {s}", .{@tagName(code)});
+    arch.cpu.halt();
+}
+
+pub fn terminate(self: *Task) void {
+    _ = self;
+}
+
+// --- //
+
+pub const State = enum(u64) {
+    alive,
+    terminated,
+};
+
+pub const Fault = enum {
+    stack_overflow,
+    unmapped_memory,
+    access_violation,
+    out_of_memory,
+    illegal_syscall,
+    unexpected_exception,
+};

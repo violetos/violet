@@ -38,6 +38,7 @@ const Map = utils.SlotMap(utils.Arc(Space));
 
 pub const Id = Map.Handle;
 pub const Ref = Map.ArcRef;
+pub const New = Map.New;
 
 pub var map: Map = .{};
 
@@ -102,6 +103,11 @@ pub fn init(half: Half) !Space {
 }
 
 pub fn SlotMap_deinit(self: *Space) void {
+    if (comptime @import("builtin").cpu.arch == .riscv64) {
+        if (self.half == .low) {
+            kernel.arch.paging.cleanLowHalfRoot(self.page_table.root_pa);
+        }
+    }
     self.page_table.deinit();
 
     var current = self.first_node;
@@ -139,7 +145,7 @@ pub fn getForView(self: *Space, owner: virt.View.Id, va: u64) ?RegionSnapshot {
     defer self.lock.release(.read, int_state);
 
     const reg = self.findRegionLocked(va) orelse return null;
-    if (!reg.owner.eql(owner)) return null;
+    if (reg.owner != owner) return null;
     return reg.snapshot();
 }
 
@@ -284,7 +290,7 @@ pub fn removeForView(self: *Space, owner: virt.View.Id, base_va: u64) !void {
 
     const reg_ptr = self.findRegionByBaseLocked(base_va) orelse return Error.NotFound;
 
-    if (!reg_ptr.owner.eql(owner)) return Error.PermissionDenied;
+    if (reg_ptr.owner != owner) return Error.PermissionDenied;
     if (reg_ptr.isPinned()) return Error.PinnedObject;
 
     try reg_ptr.pin_state.beginExclusive();
@@ -311,7 +317,7 @@ pub fn protectForView(self: *Space, owner: virt.View.Id, base_va: u64, new_perms
 
     const reg_ptr = self.findRegionByBaseLocked(base_va) orelse return Error.NotFound;
 
-    if (!reg_ptr.owner.eql(owner)) return Error.PermissionDenied;
+    if (reg_ptr.owner != owner) return Error.PermissionDenied;
     if (reg_ptr.kind == .guard) return Error.ProtectedRegion;
     if (reg_ptr.isPinned()) return Error.PinnedObject;
 
@@ -352,7 +358,7 @@ pub fn removeAllForView(self: *Space, owner: virt.View.Id, force: bool) !void {
         var scan = self.first_node;
         while (scan) |node| : (scan = node.next) {
             for (node.regions[0..node.len]) |*reg| {
-                if (reg.owner.eql(owner) and reg.isPinned()) {
+                if (reg.owner == owner and reg.isPinned()) {
                     return Error.PinnedObject;
                 }
             }
@@ -367,7 +373,7 @@ pub fn removeAllForView(self: *Space, owner: virt.View.Id, force: bool) !void {
 
         for (0..node.len) |read_idx| {
             var reg = &node.regions[read_idx];
-            if (reg.owner.eql(owner)) {
+            if (reg.owner == owner) {
                 const r_start = reg.reservedStart();
                 if (r_start < self.free_hint_va and r_start >= self.half.minVa()) {
                     self.free_hint_va = r_start;
@@ -454,7 +460,7 @@ pub fn unpinRangeForView(self: *Space, owner: virt.View.Id, va: u64, size: u64) 
     var cursor = start_va;
     while (cursor < end_va) {
         const reg = self.findRegionLocked(cursor) orelse break;
-        if (reg.owner.eql(owner)) {
+        if (reg.owner == owner) {
             reg.unpin();
         }
         cursor = reg.end_va;
@@ -646,6 +652,94 @@ fn removeEntryLocked(self: *Space, base_va: u64) ?Region {
         current = node.next;
     }
     return null;
+}
+
+pub const FaultResult = enum {
+    /// The page was `.uncommitted` and has now been backed by a zeroed physical page and committed.
+    resolved,
+    /// The fault hit a `.guard` page (e.g. stack overflow).
+    guard_violation,
+    /// The address is not mapped in the page table.
+    unmapped,
+    /// The page is already `.committed` (permission violation) or belongs to another `View`.
+    access_violation,
+    /// Physical memory exhausted while attempting to commit the page.
+    out_of_memory,
+};
+
+pub fn handlePageFaultForView(self: *Space, _: virt.View.Id, fault_va: u64) FaultResult {
+    if (!kernel.arch.paging.isCanonical(fault_va)) return .unmapped;
+
+    const page_va = std.mem.alignBackward(u64, fault_va, paging.page_size);
+    if (!self.half.contains(page_va, page_va + paging.page_size)) return .unmapped;
+
+    const int_state = self.lock.acquire(.write, 0);
+    defer self.lock.release(.write, int_state);
+
+    var query = paging.Query{
+        .virtual_address = page_va,
+        .batch_size = 1,
+        .level = 0,
+    };
+    self.page_table.submit(&query) catch return .unmapped;
+
+    const state = query.state orelse return .unmapped;
+    switch (state) {
+        .guard => return .guard_violation,
+        .unmapped => return .unmapped,
+        .committed => return .access_violation,
+        .uncommitted => {},
+    }
+
+    if (query.level == 0) {
+        if (query.permissions) |perms| {
+            if (!perms.writable and !perms.executable) return .access_violation;
+        }
+    }
+
+    const reg = self.findRegionLocked(page_va) orelse return .unmapped;
+    if (reg.kind == .guard) return .guard_violation;
+    if (!reg.permissions.writable and !reg.permissions.executable) return .access_violation;
+
+    const obj: *OwnedObject = switch (reg.kind) {
+        .owned => |*o| o.ref.payload(),
+        .shared => |*s| s.ref.payload().object.payload(),
+        .guard => unreachable,
+    };
+
+    var target_pa: u64 = 0;
+    {
+        const obj_int = obj.lock.acquire(.write, 0);
+        defer obj.lock.release(.write, obj_int);
+
+        switch (obj.physical_mapping) {
+            .non_contiguous => |*list| {
+                const page_idx: usize = @intCast((page_va - reg.base_va) / paging.page_size);
+                const pa_slot = list.getPtr(page_idx) orelse return .unmapped;
+
+                if (pa_slot.* == 0) {
+                    const new_pa = phys.allocPage() catch return .out_of_memory;
+                    @memset(mem.toHhdm([paging.page_size]u8, new_pa), 0);
+                    pa_slot.* = new_pa;
+                }
+                target_pa = pa_slot.*;
+            },
+            .contiguous => |base_pa| {
+                target_pa = base_pa + (page_va - reg.base_va);
+            },
+        }
+    }
+
+    var commit_query = paging.Query{
+        .virtual_address = page_va,
+        .physical_address = target_pa,
+        .batch_size = 1,
+        .state = .committed,
+        .level = 0,
+    };
+    self.page_table.submit(&commit_query) catch return .out_of_memory;
+
+    return .resolved;
 }
 
 const Node = struct {

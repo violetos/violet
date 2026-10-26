@@ -14,22 +14,30 @@
 
 .arch armv8-a+fp
 
-.equ GEN_SIZE,       288
-.equ EXT_SIZE,       816
+.equ GEN_SIZE, 288
+.equ EXT_SIZE, 816
+.equ NESTED_SIZE, 288
 
-.equ OFF_GEN_LR,     240
-.equ OFF_GEN_PC,     248
-.equ OFF_GEN_SPSR,   256
-.equ OFF_GEN_TPIDR,  264
-.equ OFF_GEN_SP,     272
+.equ OFF_GEN_LR, 240
+.equ OFF_GEN_PC, 248
+.equ OFF_GEN_SPSR, 256
+.equ OFF_GEN_TPIDR, 264
+.equ OFF_GEN_SP, 272
 
-.equ OFF_EXT_FPCR,   512
-.equ OFF_EXT_FPSR,   520
-.equ OFF_EXT_GEN,    528
+.equ OFF_EXT_FPCR, 512
+.equ OFF_EXT_FPSR, 520
+.equ OFF_EXT_GEN, 528
+
+.equ NOFF_LR, 240
+.equ NOFF_ELR, 248
+.equ NOFF_SPSR, 256
+.equ NOFF_ESR, 264
+.equ NOFF_FAR, 272
 
 .section .text
 
 .global call_system
+.global call_system_end
 .type call_system, %function
 call_system:
     msr daifset, #0b0011
@@ -44,18 +52,23 @@ call_system:
     sub x0, x0, #GEN_SIZE
     msr sp_el0, x0
 
+    // Touch both ends of ReducedFrame first so any uncommitted/guard page fault
+    // triggers before bulk register stores.
     str x1, [x0, #OFF_GEN_SP]
+    ldp x2, x3, [sp], #16
+    stp x2, x3, [x0, #(16 * 0)]
 
     str x30, [x0, #OFF_GEN_PC] // in order to make it eret-able
     str x30, [x0, #OFF_GEN_LR]
+    str xzr, [x0, #OFF_GEN_SPSR]
 
     mrs x1, tpidr_el0
     str x1, [x0, #OFF_GEN_TPIDR]
 
-    stp x2, x3,   [x0, #(16 * 1)]
-    stp x4, x5,   [x0, #(16 * 2)]
-    stp x6, x7,   [x0, #(16 * 3)]
-    stp x8, x9,   [x0, #(16 * 4)]
+    stp x2, x3, [x0, #(16 * 1)]
+    stp x4, x5, [x0, #(16 * 2)]
+    stp x6, x7, [x0, #(16 * 3)]
+    stp x8, x9, [x0, #(16 * 4)]
     stp x10, x11, [x0, #(16 * 5)]
     stp x12, x13, [x0, #(16 * 6)]
     stp x14, x15, [x0, #(16 * 7)]
@@ -66,9 +79,7 @@ call_system:
     stp x24, x25, [x0, #(16 * 12)]
     stp x26, x27, [x0, #(16 * 13)]
     stp x28, x29, [x0, #(16 * 14)]
-
-    ldp x2, x3, [sp], #16
-    stp x2, x3, [x0, #(16 * 0)]
+call_system_end:
 
     str x0, [sp, #-16]!
 
@@ -81,15 +92,16 @@ call_system:
     b internal_exit
 
 .global extend_frame
+.global extend_frame_end
 .type extend_frame, %function
 extend_frame:
     sub x0, x0, #OFF_EXT_GEN
 
-    stp q0, q1,   [x0, #(32 * 0)]
-    stp q2, q3,   [x0, #(32 * 1)]
-    stp q4, q5,   [x0, #(32 * 2)]
-    stp q6, q7,   [x0, #(32 * 3)]
-    stp q8, q9,   [x0, #(32 * 4)]
+    stp q0, q1, [x0, #(32 * 0)]
+    stp q2, q3, [x0, #(32 * 1)]
+    stp q4, q5, [x0, #(32 * 2)]
+    stp q6, q7, [x0, #(32 * 3)]
+    stp q8, q9, [x0, #(32 * 4)]
     stp q10, q11, [x0, #(32 * 5)]
     stp q12, q13, [x0, #(32 * 6)]
     stp q14, q15, [x0, #(32 * 7)]
@@ -106,7 +118,7 @@ extend_frame:
     str x1, [x0, #OFF_EXT_FPCR]
     mrs x2, fpsr
     str x2, [x0, #OFF_EXT_FPSR]
-
+extend_frame_end:
     ret
 
 .global restore_reduced_via_eret
@@ -123,10 +135,10 @@ restore_reduced_via_eret:
     ldr x1, [x0, #OFF_GEN_SP]
     msr sp_el0, x1
 
-    ldp x2, x3,   [x0, #(16 * 1)]
-    ldp x4, x5,   [x0, #(16 * 2)]
-    ldp x6, x7,   [x0, #(16 * 3)]
-    ldp x8, x9,   [x0, #(16 * 4)]
+    ldp x2, x3, [x0, #(16 * 1)]
+    ldp x4, x5, [x0, #(16 * 2)]
+    ldp x6, x7, [x0, #(16 * 3)]
+    ldp x8, x9, [x0, #(16 * 4)]
     ldp x10, x11, [x0, #(16 * 5)]
     ldp x12, x13, [x0, #(16 * 6)]
     ldp x14, x15, [x0, #(16 * 7)]
@@ -137,20 +149,20 @@ restore_reduced_via_eret:
     ldp x24, x25, [x0, #(16 * 12)]
     ldp x26, x27, [x0, #(16 * 13)]
     ldp x28, x29, [x0, #(16 * 14)]
-    ldr x30,      [x0, #OFF_GEN_LR]
+    ldr x30, [x0, #OFF_GEN_LR]
 
-    ldp x0, x1,   [x0, #(16 * 0)]
+    ldp x0, x1, [x0, #(16 * 0)]
 
     eret
 
 .global restore_extended_via_eret
 .type restore_extended_via_eret, %function
 restore_extended_via_eret:
-    ldp q0, q1,   [x0, #0]
-    ldp q2, q3,   [x0, #32]
-    ldp q4, q5,   [x0, #64]
-    ldp q6, q7,   [x0, #96]
-    ldp q8, q9,   [x0, #128]
+    ldp q0, q1, [x0, #0]
+    ldp q2, q3, [x0, #32]
+    ldp q4, q5, [x0, #64]
+    ldp q6, q7, [x0, #96]
+    ldp q8, q9, [x0, #128]
     ldp q10, q11, [x0, #160]
     ldp q12, q13, [x0, #192]
     ldp q14, q15, [x0, #224]
@@ -176,16 +188,16 @@ restore_extended_via_eret:
 restore_reduced_via_ret:
     mov sp, x1
 
-    ldr x1,       [x0, #OFF_GEN_SP]
+    ldr x1, [x0, #OFF_GEN_SP]
     msr sp_el0, x1
 
-    ldr x1,       [x0, #OFF_GEN_TPIDR]
+    ldr x1, [x0, #OFF_GEN_TPIDR]
     msr tpidr_el0, x1
 
-    ldp x2, x3,   [x0, #(16 * 1)]
-    ldp x4, x5,   [x0, #(16 * 2)]
-    ldp x6, x7,   [x0, #(16 * 3)]
-    ldp x8, x9,   [x0, #(16 * 4)]
+    ldp x2, x3, [x0, #(16 * 1)]
+    ldp x4, x5, [x0, #(16 * 2)]
+    ldp x6, x7, [x0, #(16 * 3)]
+    ldp x8, x9, [x0, #(16 * 4)]
     ldp x10, x11, [x0, #(16 * 5)]
     ldp x12, x13, [x0, #(16 * 6)]
     ldp x14, x15, [x0, #(16 * 7)]
@@ -197,9 +209,9 @@ restore_reduced_via_ret:
     ldp x26, x27, [x0, #(16 * 13)]
     ldp x28, x29, [x0, #(16 * 14)]
 
-    ldr x30,      [x0, #OFF_GEN_LR]
+    ldr x30, [x0, #OFF_GEN_LR]
 
-    ldp x0, x1,   [x0, #(16 * 0)]
+    ldp x0, x1, [x0, #(16 * 0)]
 
     msr spsel, #0
 
@@ -211,11 +223,11 @@ restore_reduced_via_ret:
 .global restore_extended_via_ret
 .type restore_extended_via_ret, %function
 restore_extended_via_ret:
-    ldp q0, q1,   [x0, #0]
-    ldp q2, q3,   [x0, #32]
-    ldp q4, q5,   [x0, #64]
-    ldp q6, q7,   [x0, #96]
-    ldp q8, q9,   [x0, #128]
+    ldp q0, q1, [x0, #0]
+    ldp q2, q3, [x0, #32]
+    ldp q4, q5, [x0, #64]
+    ldp q6, q7, [x0, #96]
+    ldp q8, q9, [x0, #128]
     ldp q10, q11, [x0, #160]
     ldp q12, q13, [x0, #192]
     ldp q14, q15, [x0, #224]
@@ -259,10 +271,10 @@ restore_extended_via_ret:
     mrs x1, tpidr_el0
     str x1, [x0, #OFF_GEN_TPIDR]
 
-    stp x2, x3,   [x0, #(16 * 1)]
-    stp x4, x5,   [x0, #(16 * 2)]
-    stp x6, x7,   [x0, #(16 * 3)]
-    stp x8, x9,   [x0, #(16 * 4)]
+    stp x2, x3, [x0, #(16 * 1)]
+    stp x4, x5, [x0, #(16 * 2)]
+    stp x6, x7, [x0, #(16 * 3)]
+    stp x8, x9, [x0, #(16 * 4)]
     stp x10, x11, [x0, #(16 * 5)]
     stp x12, x13, [x0, #(16 * 6)]
     stp x14, x15, [x0, #(16 * 7)]
@@ -274,15 +286,16 @@ restore_extended_via_ret:
     stp x26, x27, [x0, #(16 * 13)]
     stp x28, x29, [x0, #(16 * 14)]
 
-    str x30,      [x0, #OFF_GEN_LR]
+    str x30, [x0, #OFF_GEN_LR]
 
-    ldp x2, x3, [sp, #16] 
+    ldp x2, x3, [sp, #16]
     stp x2, x3, [x0, #(16 * 0)]
 
     ldr x1, [sp, #0]
     str x1, [x0, #OFF_GEN_PC]
 
     ldr x1, [sp, #8]
+    str x1, [x0, #OFF_GEN_SPSR]
     msr spsr_el1, x1
 
     ldp x2, x3, [sp, #32]
@@ -295,57 +308,65 @@ restore_extended_via_ret:
 .endm
 
 .macro NESTED_HANDLER handler
-    stp x0, x1, [sp, #-16]!
-    stp x2, x3, [sp, #-16]!
-    stp x4, x5, [sp, #-16]!
-    stp x6, x7, [sp, #-16]!
-    stp x8, x9, [sp, #-16]!
-    stp x10, x11, [sp, #-16]!
-    stp x12, x13, [sp, #-16]!
-    stp x14, x15, [sp, #-16]!
-    stp x16, x17, [sp, #-16]!
-    stp x18, x19, [sp, #-16]!
-    stp x20, x21, [sp, #-16]!
-    stp x22, x23, [sp, #-16]!
-    stp x24, x25, [sp, #-16]!
-    stp x26, x27, [sp, #-16]!
-    stp x28, x29, [sp, #-16]!
-    str x30,      [sp, #-16]!
+    sub sp, sp, #NESTED_SIZE
+
+    stp x0, x1, [sp, #(16 * 0)]
+    stp x2, x3, [sp, #(16 * 1)]
+    stp x4, x5, [sp, #(16 * 2)]
+    stp x6, x7, [sp, #(16 * 3)]
+    stp x8, x9, [sp, #(16 * 4)]
+    stp x10, x11, [sp, #(16 * 5)]
+    stp x12, x13, [sp, #(16 * 6)]
+    stp x14, x15, [sp, #(16 * 7)]
+    stp x16, x17, [sp, #(16 * 8)]
+    stp x18, x19, [sp, #(16 * 9)]
+    stp x20, x21, [sp, #(16 * 10)]
+    stp x22, x23, [sp, #(16 * 11)]
+    stp x24, x25, [sp, #(16 * 12)]
+    stp x26, x27, [sp, #(16 * 13)]
+    stp x28, x29, [sp, #(16 * 14)]
 
     mrs x10, elr_el1
     mrs x11, spsr_el1
+    mrs x12, esr_el1
+    mrs x13, far_el1
 
-    stp x10, x11, [sp, #-16]!
+    stp x30, x10, [sp, #NOFF_LR]
+    stp x11, x12, [sp, #NOFF_SPSR]
+    str x13, [sp, #NOFF_FAR]
 
-    mrs x0, esr_el1
-    mrs x1, far_el1
-
+    mov x0, sp
     bl \handler
 
-    ldp x10, x11, [sp], #16
+    ldp x30, x10, [sp, #NOFF_LR]
+    ldr x11, [sp, #NOFF_SPSR]
 
     msr elr_el1, x10
     msr spsr_el1, x11
 
-    ldr x30,      [sp], #16
-    ldp x28, x29, [sp], #16
-    ldp x26, x27, [sp], #16
-    ldp x24, x25, [sp], #16
-    ldp x22, x23, [sp], #16
-    ldp x20, x21, [sp], #16
-    ldp x18, x19, [sp], #16
-    ldp x16, x17, [sp], #16
-    ldp x14, x15, [sp], #16
-    ldp x12, x13, [sp], #16
-    ldp x10, x11, [sp], #16
-    ldp x8, x9,   [sp], #16
-    ldp x6, x7,   [sp], #16
-    ldp x4, x5,   [sp], #16
-    ldp x2, x3,   [sp], #16
-    ldp x0, x1,   [sp], #16
+    ldp x0, x1, [sp, #(16 * 0)]
+    ldp x2, x3, [sp, #(16 * 1)]
+    ldp x4, x5, [sp, #(16 * 2)]
+    ldp x6, x7, [sp, #(16 * 3)]
+    ldp x8, x9, [sp, #(16 * 4)]
+    ldp x10, x11, [sp, #(16 * 5)]
+    ldp x12, x13, [sp, #(16 * 6)]
+    ldp x14, x15, [sp, #(16 * 7)]
+    ldp x16, x17, [sp, #(16 * 8)]
+    ldp x18, x19, [sp, #(16 * 9)]
+    ldp x20, x21, [sp, #(16 * 10)]
+    ldp x22, x23, [sp, #(16 * 11)]
+    ldp x24, x25, [sp, #(16 * 12)]
+    ldp x26, x27, [sp, #(16 * 13)]
+    ldp x28, x29, [sp, #(16 * 14)]
+
+    add sp, sp, #NESTED_SIZE
 
     eret
 .endm
+
+.global exception_handlers_start
+exception_handlers_start:
 
 // --- EL1t --- //
 
@@ -361,20 +382,6 @@ _handler_el1t_fiq:
 _handler_el1t_serror:
     EXCEPTION_HANDLER el1t_serror
 
-// --- EL1h --- //
-
-_handler_el1h_sync:
-    NESTED_HANDLER el1h_sync
-
-_handler_el1h_irq:
-    NESTED_HANDLER el1h_irq
-
-_handler_el1h_fiq:
-    NESTED_HANDLER el1h_fiq
-
-_handler_el1h_serror:
-    NESTED_HANDLER el1h_serror
-
 // --- EL0 --- //
 
 _handler_el0_sync:
@@ -388,6 +395,23 @@ _handler_el0_fiq:
 
 _handler_el0_serror:
     EXCEPTION_HANDLER el0_serror
+
+.global exception_handlers_end
+exception_handlers_end:
+
+// --- EL1h --- //
+
+_handler_el1h_sync:
+    NESTED_HANDLER el1h_sync
+
+_handler_el1h_irq:
+    NESTED_HANDLER el1h_irq
+
+_handler_el1h_fiq:
+    NESTED_HANDLER el1h_fiq
+
+_handler_el1h_serror:
+    NESTED_HANDLER el1h_serror
 
 .balign 0x800
 .globl exception_vector_table

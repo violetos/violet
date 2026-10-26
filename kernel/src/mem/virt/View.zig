@@ -40,7 +40,6 @@ pub const New = Map.New;
 pub var map: Map = .{};
 
 id: Id = .null,
-parent: ?Id = null,
 space: Space.Ref,
 closed: std.atomic.Value(bool) = .init(false),
 
@@ -59,7 +58,6 @@ pub fn createSubView(self: *View) !New {
     if (self.closed.load(.acquire)) return Space.Error.ViewClosed;
 
     const id, const ref = try map.insert(.{
-        .parent = self.id,
         .space = self.space.clone(),
     });
     ref.payload().id = id;
@@ -183,3 +181,8 @@ pub const PinnedRange = struct {
         self.space.release();
     }
 };
+
+pub fn handlePageFault(self: *View, fault_va: u64) Space.FaultResult {
+    if (self.closed.load(.acquire)) return .access_violation;
+    return self.space.payload().handlePageFaultForView(self.id, fault_va);
+}

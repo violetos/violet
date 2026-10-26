@@ -128,6 +128,12 @@ pub fn stage2_entry() callconv(.c) noreturn {
         root_dom.initLocal() catch |err| {
             std.debug.panic("Root.InterruptController.initLocal: {s}", .{@errorName(err)});
         };
+
+        if (comptime builtin.cpu.arch == .riscv64) {
+            arch.paging.registerShootdownIpi() catch |err| {
+                std.debug.panic("BSP: registerShootdownIpi: {s}", .{@errorName(err)});
+            };
+        }
     }
 
     drivers.runStage(.stage4, getXsdt(), getFdt());

@@ -32,6 +32,7 @@ pub const Task = @import("Task.zig");
 
 pub const SchedContext = struct {
     current_task: ?Task.Ref,
+    in_kernel: bool,
 
     /// protect run_queue.
     run_lock: mem.utils.RwLock,
@@ -39,6 +40,7 @@ pub const SchedContext = struct {
 
     pub fn init(self: *SchedContext) !void {
         self.current_task = null;
+        self.in_kernel = true;
     }
 
     pub fn current() *SchedContext {
