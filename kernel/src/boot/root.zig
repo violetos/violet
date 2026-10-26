@@ -29,6 +29,8 @@ const mem = kernel.mem;
 const drivers = kernel.drivers;
 const acpi = drivers.acpi;
 
+const genesis = @import("genesis.zig");
+
 // --- boot/main.zig --- //
 
 export var start_marker: limine.RequestsStartMarker linksection(".limine_requests_start") = .{};
@@ -164,6 +166,10 @@ pub fn stage2_entry() callconv(.c) noreturn {
 
     kernel.cpu.initSecondary() catch |err| {
         std.debug.panic("kernel.cpu.initSecondary: {s}", .{@errorName(err)});
+    };
+
+    genesis.init() catch |err| {
+        std.debug.panic("genesis.init: {s}", .{@errorName(err)});
     };
 
     kernel.cpu.releaseSecondaryToScheduler();

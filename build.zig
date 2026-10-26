@@ -63,6 +63,20 @@ pub fn build(b: *std.Build) !void {
         _ = root.addCopyFile(kernel_exe.getEmittedBin(), "core/kernel.elf");
     }
 
+    {
+        const genesis_dep = b.dependency("genesis", .{
+            .arch = arch,
+            .optimize = optimize,
+            .is_module = true,
+        });
+
+        const genesis_exe = genesis_dep.artifact("genesis");
+
+        if (optimize == .debug) b.installArtifact(genesis_exe);
+
+        _ = root.addCopyFile(genesis_exe.getEmittedBin(), "core/genesis.elf");
+    }
+
     setupFirmware(b, root, board);
 
     if (board) |bo| {
