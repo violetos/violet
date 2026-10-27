@@ -34,8 +34,7 @@ const Future = sched.Future;
 // --- drivers/timer/root.zig --- //
 
 pub fn handle() !void {
-    // std.log.info("hey! i'm the timer :p", .{});
-    // arch.cpu.halt();
+    try sched.acknowledge(.none);
 }
 
 pub var impl: ?TimerImpl = null;

@@ -15,6 +15,7 @@
 // --- dependencies -- //
 
 const std = @import("std");
+const basalt = @import("basalt");
 
 // --- imports --- //
 
@@ -42,35 +43,127 @@ pub const New = Map.New;
 // --- //
 
 process: Process.Ref,
+setting: basalt.system.task.Settings,
+last_resume: u64 = 0,
 
-state: std.atomic.Value(State) = .init(.alive),
+state: std.atomic.Value(State) = .init(.pending),
 
 interrupt_data: arch.interrupts.InterruptData,
 
-lock: mem.utils.RwLock,
-future_last: ?Future.Ref,
-future_next: ?Future.Ref,
+lock: mem.utils.RwLock = .{},
 
 /// Protected by Process.lock
-task_last: ?Task.Ref,
+task_last: ?Task.Ref = null,
 /// Protected by Process.lock
-task_next: ?Task.Ref,
+task_next: ?Task.Ref = null,
 
-pub fn create(item: Task) !Task.New {
-    return try map.insert(item);
+// --- //
+
+pub fn SlotMap_deinit(self: *Task) void {
+    self.process.release();
+}
+
+// --- //
+
+const default_stack_size: u64 = 2 * 1024 * 1024; // 2 MiB
+
+pub fn create(options: Options) !New {
+    var proc_ref = options.process;
+    errdefer proc_ref.release();
+
+    const process: *Process = proc_ref.payload();
+    const privileged = process.isPrivileged();
+    const proc_view: *mem.virt.View = process.view.payload();
+
+    const stack_pages = default_stack_size / mem.paging.page_size;
+
+    var page_list: utils.UnrolledList(u64, null) = .{};
+    errdefer page_list.deinit();
+    for (0..stack_pages) |_| {
+        _ = try page_list.append(0);
+    }
+
+    _, var stack_obj = try mem.virt.OwnedObject.map.insert(.{
+        .length = stack_pages,
+        .mem_type = .writeback,
+        .permissions = .{
+            .writable = true,
+            .executable = false,
+            .user = !privileged,
+            .global = privileged,
+        },
+        .owns_physical = true,
+        .physical_mapping = .{ .non_contiguous = page_list },
+    });
+    defer stack_obj.release();
+
+    var interrupt_data: arch.interrupts.InterruptData = undefined;
+    var stack_base: u64 = 0;
+
+    if (privileged) {
+        stack_base = try proc_view.alloc(default_stack_size, .{ .owned = stack_obj.clone() }, true, 0);
+
+        const stack_top = stack_base + default_stack_size;
+        const frame_va = stack_top - @sizeOf(arch.interrupts.ReducedFrame);
+        const frame_ptr: *arch.interrupts.ReducedFrame = @ptrFromInt(frame_va);
+
+        interrupt_data = .fromInitialData(frame_ptr, frame_va, stack_top, options.entry_point, true, options.arg, options.tls);
+    } else {
+        _, const shared_ref = try mem.virt.SharedObject.create(stack_obj.clone(), .{
+            .writable = true,
+            .executable = false,
+            .user = false,
+            .global = false,
+        });
+
+        const kview: *mem.virt.View = mem.virt.kernel_view.payload();
+        const temp_kva = try kview.alloc(default_stack_size, .{ .shared = shared_ref }, false, 0);
+        defer kview.remove(temp_kva) catch unreachable;
+
+        stack_base = try proc_view.alloc(default_stack_size, .{ .owned = stack_obj.clone() }, true, 0);
+
+        const stack_top = stack_base + default_stack_size;
+        const user_frame_va = stack_top - @sizeOf(arch.interrupts.ReducedFrame);
+        const kernel_frame_va = (temp_kva + default_stack_size) - @sizeOf(arch.interrupts.ReducedFrame);
+        const kernel_frame_ptr: *arch.interrupts.ReducedFrame = @ptrFromInt(kernel_frame_va);
+
+        interrupt_data = .fromInitialData(kernel_frame_ptr, user_frame_va, stack_top, options.entry_point, false, options.arg, options.tls);
+    }
+    errdefer proc_view.remove(stack_base) catch {};
+
+    const id, const task_ref = try map.insert(Task{
+        .process = proc_ref,
+        .interrupt_data = interrupt_data,
+        .setting = options.setting,
+    });
+    errdefer _ = map.remove(id);
+
+    {
+        const int_state = process.lock.acquire(.write, 0);
+        defer process.lock.release(.write, int_state);
+
+        const task_ptr: *Task = task_ref.payload();
+        if (process.task_head) |head| {
+            head.payload().task_last = task_ref.clone();
+            task_ptr.task_next = head;
+        }
+        process.task_head = task_ref.clone();
+    }
+
+    return .{ id, task_ref };
 }
 
 pub fn get(id: Task.Id) ?Task.Ref {
     return map.get(id);
 }
 
-// --- //
-
 pub fn fault(self: *Task, code: Fault) void {
     _ = self;
+    _ = code;
 
-    std.log.err("task faulted with {s}", .{@tagName(code)});
-    arch.cpu.halt();
+    const ctx = sched.SchedContext.current();
+    ctx.current_task.?.release();
+    ctx.current_task = null;
 }
 
 pub fn terminate(self: *Task) void {
@@ -79,8 +172,18 @@ pub fn terminate(self: *Task) void {
 
 // --- //
 
-pub const State = enum(u64) {
-    alive,
+pub const Options = struct {
+    process: Process.Ref,
+    setting: basalt.system.task.Settings,
+    entry_point: u64,
+    arg: u64,
+    tls: u64,
+};
+
+pub const State = enum(u8) {
+    pending,
+    running,
+    suspended,
     terminated,
 };
 

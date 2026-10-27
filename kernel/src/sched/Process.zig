@@ -23,6 +23,8 @@ const kernel = @import("root");
 const mem = kernel.mem;
 const utils = mem.utils;
 const virt = mem.virt;
+const Space = virt.Space;
+const View = virt.View;
 
 const sched = kernel.sched;
 const Future = sched.Future;
@@ -41,10 +43,41 @@ pub const New = Map.New;
 
 view: mem.virt.View.Ref,
 
-lock: mem.utils.RwLock,
-task_head: ?Task.Ref,
-future_head: ?Future.Ref,
+affinity_offset: u8,
+
+lock: mem.utils.RwLock = .{},
+/// Protected by Process.lock
+task_head: ?Task.Ref = null,
+/// Protected by Process.lock
+future_head: ?Future.Ref = null,
+
+pub fn create(options: Options) !New {
+    var virt_space: Space.New = if (options.privileged)
+        undefined
+    else
+        try Space.map.insert(try Space.init(.high));
+    defer if (!options.privileged) virt_space.@"1".release();
+
+    var virt_view: View.New = if (options.privileged)
+        try mem.virt.kernel_view.payload().createSubView()
+    else
+        try View.create(virt_space.@"1".clone());
+    errdefer virt_view.@"1".release();
+
+    const new_process = try map.insert(Process{
+        .view = virt_view.@"1",
+        .affinity_offset = 0,
+    });
+
+    return new_process;
+}
 
 pub fn isPrivileged(self: *const Process) bool {
     return self.view.payload().space.index == mem.virt.kernel_space.index;
 }
+
+// --- //
+
+pub const Options = struct {
+    privileged: bool,
+};

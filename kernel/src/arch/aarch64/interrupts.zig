@@ -160,6 +160,12 @@ fn faultCurrentTask(code: sched.Task.Fault, fault_va: u64, pc: u64, is_nested: b
             .{ @tagName(code), is_nested, fault_va, pc },
         );
         task.fault(code);
+        sched.acknowledge(.none) catch |err| {
+            std.debug.panic(
+                "fatal kernel error, on sched.acknowledge: {s}",
+                .{@errorName(err)},
+            );
+        };
     } else {
         std.debug.panic(
             "fatal kernel fault ({s}, nested={}) at 0x{x} (PC=0x{x}) with no active task",
@@ -511,13 +517,42 @@ pub const InterruptData = struct {
     frame_state: FrameState,
     resume_mode: ResumeMode,
 
-    pub fn init(data: *InterruptData, privileged: bool) !void {
-        _ = data;
-        _ = privileged;
-    }
+    pub fn fromInitialData(
+        kernel_frame_ptr: *ReducedFrame,
+        task_frame_va: u64,
+        stack_top: u64,
+        entry_point: u64,
+        privileged: bool,
+        arg: u64,
+        tls: u64,
+    ) InterruptData {
+        const current_el_mode: arch.registers.ExceptionLevel = if (privileged) blk: {
+            const raw_el = asm volatile ("mrs %[el], CurrentEL"
+                : [el] "=r" (-> u64),
+            );
+            break :blk @fromBackingInt(@intCast(@as(u4, @truncate(raw_el))));
+        } else .el0;
 
-    pub fn deinit(data: *InterruptData) void {
-        _ = data;
+        const initial_spsr = arch.registers.SPSR{
+            .mode = current_el_mode,
+        };
+
+        var frame = ReducedFrame{
+            .xregs = @splat(0),
+            .link_register = entry_point,
+            .program_counter = entry_point,
+            .spsr = @bitCast(initial_spsr),
+            .tpidr_el0 = tls,
+            .stack_pointer = stack_top,
+        };
+        frame.setArg(0, arg);
+
+        kernel_frame_ptr.* = frame;
+
+        return .{
+            .frame_state = .{ .reduced_frame = @ptrFromInt(task_frame_va) },
+            .resume_mode = if (privileged) .via_ret else .{ .via_eret = initial_spsr },
+        };
     }
 };
 
