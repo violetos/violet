@@ -366,6 +366,18 @@ pub fn cpuInit(cpu_context: *kernel.cpu.CpuContext) void {
 
     arch.registers.storeVbarEl1(@intFromPtr(&exception_vector_table));
     arch.registers.storeSpEl1(cpu_context.interrupts_context.kernel_stack_top);
+
+    asm volatile (
+        \\ mov x0, #(3 << 20)
+        \\ msr cpacr_el1, x0
+        \\ mrs x0, CurrentEL
+        \\ lsr x0, x0, #2
+        \\ cmp x0, #2
+        \\ b.ne 1f
+        \\ msr cptr_el2, xzr
+        \\ 1:
+        \\ isb
+        ::: .{ .x0 = true, .memory = true });
 }
 
 pub const PendingFrameFault = struct {
