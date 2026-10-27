@@ -214,10 +214,9 @@ fn secondary_stage2(cpu_context: *CpuContext) callconv(.c) noreturn {
         std.atomic.spinLoopHint();
     }
 
-    _ = arch.interrupts.set(.enabled);
-
+    kernel.sched.SchedContext.current().in_kernel = false;
     drivers.timer.arm(drivers.timer.now());
-
+    _ = arch.interrupts.set(.enabled);
     arch.cpu.halt();
 }
 

@@ -174,9 +174,9 @@ pub fn stage2_entry() callconv(.c) noreturn {
 
     kernel.cpu.releaseSecondaryToScheduler();
 
-    _ = arch.interrupts.set(.enabled);
+    kernel.sched.SchedContext.current().in_kernel = false;
     drivers.timer.arm(drivers.timer.now());
-
+    _ = arch.interrupts.set(.enabled);
     arch.cpu.halt();
 }
 
