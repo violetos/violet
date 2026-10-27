@@ -221,27 +221,16 @@ pub fn flush(scope: paging.FlushScope) void {
                 ::: .{ .memory = true });
         },
         .address => |addr| {
-            const va_shifted = addr.va >> paging.offset_bits;
+            const va_operand = (addr.va >> 12) & ((@as(u64, 1) << 44) - 1);
 
-            if (addr.global) {
-                asm volatile (
-                    \\ dsb ishst
-                    \\ tlbi vaae1is, %[val]
-                    \\ dsb ish
-                    \\ isb
-                    :
-                    : [val] "r" (va_shifted),
-                    : .{ .memory = true });
-            } else {
-                asm volatile (
-                    \\ dsb ishst
-                    \\ tlbi vae1is, %[val]
-                    \\ dsb ish
-                    \\ isb
-                    :
-                    : [val] "r" (va_shifted),
-                    : .{ .memory = true });
-            }
+            asm volatile (
+                \\ dsb ishst
+                \\ tlbi vaae1is, %[val]
+                \\ dsb ish
+                \\ isb
+                :
+                : [val] "r" (va_operand),
+                : .{ .memory = true });
         },
     }
 }
