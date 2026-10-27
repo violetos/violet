@@ -35,7 +35,6 @@
 
 .section .text
 
-
 .macro STORE_REDUCED_AT_A0
     sd ra, (8*0)(a0)
     sd gp, (8*1)(a0)
@@ -120,12 +119,14 @@ call_system:
     addi a0, t1, -GEN_SIZE
 
     sd t1, OFF_GEN_SP(a0)
-    sd ra, OFF_GEN_PC(a0)
     STORE_REDUCED_AT_A0
+    sd ra, OFF_GEN_PC(a0)
 
     ld t2, 0(sp)
     sd t2, (8*8)(a0)
 call_system_end:
+    csrr t0, sscratch
+    ld tp, ANCHOR_CPU_CONTEXT(t0)
 
     sd a0, 16(sp)
 
@@ -188,6 +189,9 @@ extend_frame_end:
 .global restore_extended_via_sret
 .type restore_extended_via_sret, %function
 restore_extended_via_sret:
+    mv sp, a1
+    csrr t2, sstatus
+
     fld f0, (8*0)(a0)
     fld f1, (8*1)(a0)
     fld f2, (8*2)(a0)
@@ -224,12 +228,15 @@ restore_extended_via_sret:
     ld t0, OFF_EXT_FCSR(a0)
     fscsr t0
 
+    csrw sstatus, t2
     addi a0, a0, OFF_EXT_GEN
     j restore_reduced_via_sret
 
 .global restore_extended_via_ret
 .type restore_extended_via_ret, %function
 restore_extended_via_ret:
+    mv sp, a1
+
     fld f0, (8*0)(a0)
     fld f1, (8*1)(a0)
     fld f2, (8*2)(a0)
@@ -274,31 +281,39 @@ restore_extended_via_ret:
 .global restore_reduced_via_sret
 .type restore_reduced_via_sret, %function
 restore_reduced_via_sret:
-    csrr t0, sscratch
-    sd zero, ANCHOR_IN_HANDLER(t0)
-
-    ld t0, OFF_GEN_PC(a0)
-    csrw sepc, t0
+    mv sp, a1
+    csrr t2, sstatus
 
     ld t1, OFF_GEN_SP(a0)
-    mv sp, t1
+    ld t0, OFF_GEN_PC(a0)
+    ld ra, (8*0)(a0)
+
+    csrw sepc, t0
+    csrw sstatus, t2
 
     LOAD_REDUCED_EXCEPT_SP_A0
+    ld sp, OFF_GEN_SP(a0)
     ld a0, (8*8)(a0)
+
+    csrrw t0, sscratch, t0
+    sd zero, ANCHOR_IN_HANDLER(t0)
+    csrrw t0, sscratch, t0
 
     sret
 
 .global restore_reduced_via_ret
 .type restore_reduced_via_ret, %function
 restore_reduced_via_ret:
-    csrr t0, sscratch
-    sd zero, ANCHOR_IN_HANDLER(t0)
+    mv sp, a1
 
-    ld t1, OFF_GEN_SP(a0)
-    mv sp, t1
-
+    ld t0, OFF_GEN_SP(a0)
     LOAD_REDUCED_EXCEPT_SP_A0
+    ld sp, OFF_GEN_SP(a0)
     ld a0, (8*8)(a0)
+
+    csrrw t0, sscratch, t0
+    sd zero, ANCHOR_IN_HANDLER(t0)
+    csrrw t0, sscratch, t0
 
     csrsi sstatus, 2
     ret
@@ -418,6 +433,9 @@ nested_entry:
     sd t0, NOFF_SCAUSE(sp)
     csrr t0, stval
     sd t0, NOFF_STVAL(sp)
+
+    csrr t0, sscratch
+    ld tp, ANCHOR_CPU_CONTEXT(t0)
 
     mv a0, sp
     call trap_nested

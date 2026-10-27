@@ -376,7 +376,7 @@ pub const InterruptsContext = struct {
             .scratch_a0 = 0,
             .scratch_t1 = 0,
             .scratch_t2 = 0,
-            .in_handler = 0,
+            .in_handler = 1,
         };
         self.pending_frame_fault = null;
     }

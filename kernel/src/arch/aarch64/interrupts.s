@@ -55,12 +55,17 @@ call_system:
     // Touch both ends of ReducedFrame first so any uncommitted/guard page fault
     // triggers before bulk register stores.
     str x1, [x0, #OFF_GEN_SP]
-    ldp x2, x3, [sp], #16
-    stp x2, x3, [x0, #(16 * 0)]
+    ldr x1, [sp, #0]
+    str x1, [x0, #0]
+    ldr x1, [sp, #8]
+    str x1, [x0, #8]
+    add sp, sp, #16
 
     str x30, [x0, #OFF_GEN_PC] // in order to make it eret-able
     str x30, [x0, #OFF_GEN_LR]
-    str xzr, [x0, #OFF_GEN_SPSR]
+
+    mrs x1, CurrentEL
+    str x1, [x0, #OFF_GEN_SPSR]
 
     mrs x1, tpidr_el0
     str x1, [x0, #OFF_GEN_TPIDR]
@@ -96,6 +101,7 @@ call_system_end:
 .type extend_frame, %function
 extend_frame:
     sub x0, x0, #OFF_EXT_GEN
+    msr sp_el0, x0
 
     stp q0, q1, [x0, #(32 * 0)]
     stp q2, q3, [x0, #(32 * 1)]
@@ -124,16 +130,22 @@ extend_frame_end:
 .global restore_reduced_via_eret
 .type restore_reduced_via_eret, %function
 restore_reduced_via_eret:
+    mrs x3, spsr_el1
+
+    ldr x2, [x0, #OFF_GEN_SP]
+    msr sp_el0, x2
+
+    ldp x4, x5, [x0, #(16 * 0)]
+    sub x1, x1, #16
+    stp x4, x5, [x1, #0]
     mov sp, x1
 
     ldr x1, [x0, #OFF_GEN_PC]
     msr elr_el1, x1
+    msr spsr_el1, x3
 
     ldr x1, [x0, #OFF_GEN_TPIDR]
     msr tpidr_el0, x1
-
-    ldr x1, [x0, #OFF_GEN_SP]
-    msr sp_el0, x1
 
     ldp x2, x3, [x0, #(16 * 1)]
     ldp x4, x5, [x0, #(16 * 2)]
@@ -151,13 +163,15 @@ restore_reduced_via_eret:
     ldp x28, x29, [x0, #(16 * 14)]
     ldr x30, [x0, #OFF_GEN_LR]
 
-    ldp x0, x1, [x0, #(16 * 0)]
+    ldp x0, x1, [sp], #16
 
     eret
 
 .global restore_extended_via_eret
 .type restore_extended_via_eret, %function
 restore_extended_via_eret:
+    mrs x3, spsr_el1
+
     ldp q0, q1, [x0, #0]
     ldp q2, q3, [x0, #32]
     ldp q4, q5, [x0, #64]
@@ -180,16 +194,20 @@ restore_extended_via_eret:
     ldr x2, [x0, #OFF_EXT_FPSR]
     msr fpsr, x2
 
+    msr spsr_el1, x3
     add x0, x0, #OFF_EXT_GEN
     b restore_reduced_via_eret
 
 .global restore_reduced_via_ret
 .type restore_reduced_via_ret, %function
 restore_reduced_via_ret:
-    mov sp, x1
+    ldr x2, [x0, #OFF_GEN_SP]
+    msr sp_el0, x2
 
-    ldr x1, [x0, #OFF_GEN_SP]
-    msr sp_el0, x1
+    ldp x4, x5, [x0, #(16 * 0)]
+    sub x1, x1, #16
+    stp x4, x5, [x1, #0]
+    mov sp, x1
 
     ldr x1, [x0, #OFF_GEN_TPIDR]
     msr tpidr_el0, x1
@@ -211,7 +229,7 @@ restore_reduced_via_ret:
 
     ldr x30, [x0, #OFF_GEN_LR]
 
-    ldp x0, x1, [x0, #(16 * 0)]
+    ldp x0, x1, [sp], #16
 
     msr spsel, #0
 
@@ -267,6 +285,10 @@ restore_extended_via_ret:
     msr sp_el0, x0
 
     str x1, [x0, #OFF_GEN_SP]
+    ldr x1, [sp, #16]
+    str x1, [x0, #0]
+    ldr x1, [sp, #24]
+    str x1, [x0, #8]
 
     mrs x1, tpidr_el0
     str x1, [x0, #OFF_GEN_TPIDR]
@@ -287,9 +309,6 @@ restore_extended_via_ret:
     stp x28, x29, [x0, #(16 * 14)]
 
     str x30, [x0, #OFF_GEN_LR]
-
-    ldp x2, x3, [sp, #16]
-    stp x2, x3, [x0, #(16 * 0)]
 
     ldr x1, [sp, #0]
     str x1, [x0, #OFF_GEN_PC]
