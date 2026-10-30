@@ -47,6 +47,9 @@ pub const SchedContext = struct {
     pub fn init(self: *SchedContext) !void {
         self.current_task = null;
         self.in_kernel = true;
+
+        self.run_lock = .{};
+        self.run_queue = .empty;
     }
 
     pub fn current() *SchedContext {
