@@ -40,13 +40,13 @@ pub fn init() !void {
     try timer.init();
 }
 
-fn null_syscall(frame: *arch.interrupts.ReducedFrame) !void {
+fn null_syscall(frame: *arch.interrupts.ReducedFrame, _: u64) !void {
     success(frame, .{});
 }
 
 // --- //
 
-pub const SyscallFn = *const fn (*arch.interrupts.ReducedFrame) anyerror!void;
+pub const SyscallFn = *const fn (*arch.interrupts.ReducedFrame, u64) anyerror!void;
 var registers: [basalt.system.call.MAX_CODE]u64 = undefined;
 
 pub fn register(code: basalt.system.call.Code, syscall_fn: SyscallFn) void {
@@ -67,11 +67,12 @@ pub inline fn success(frame: *arch.interrupts.ReducedFrame, values: basalt.syste
     frame.setArg(1, values.val2);
 }
 
-pub inline fn fail(frame: *arch.interrupts.ReducedFrame, code: basalt.system.call.Code) !void {
+pub inline fn fail(frame: *arch.interrupts.ReducedFrame, code: basalt.system.call.ErrorCode, cause: basalt.system.call.ErrorCause) !void {
     frame.setArg(0, @bitCast(basalt.system.call.ResultArgs{
         .is_success = false,
         .value = .{ .err = .{
             .error_code = code,
+            .error_cause = cause,
         } },
     }));
 
@@ -94,19 +95,22 @@ pub export fn internal_call_system(frame: *arch.interrupts.ReducedFrame) callcon
                 .is_success = false,
                 .value = .{ .err = .{
                     .error_code = .internal_failure,
+                    .error_cause = .unspecified,
                 } },
             }));
 
+            const arg1 = frame.getArg(1);
             frame.setArg(1, 0);
 
-            return syscall_fn(frame) catch {};
+            return syscall_fn(frame, arg1) catch {};
         }
     }
 
     frame.setArg(0, @bitCast(basalt.system.call.ResultArgs{
         .is_success = false,
         .value = .{ .err = .{
-            .error_code = .unknown_code,
+            .error_code = .unknown_syscall,
+            .error_cause = .unspecified,
         } },
     }));
 

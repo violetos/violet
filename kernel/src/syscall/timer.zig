@@ -30,14 +30,16 @@ pub fn init() !void {
     syscall.register(.timer_sequential, &timer_sequential);
 }
 
-fn timer_single(frame: *arch.interrupts.ReducedFrame) !void {
+fn timer_single(frame: *arch.interrupts.ReducedFrame, arg1: u64) !void {
+    _ = arg1;
     _ = frame;
 
     // doing nothing causes .internal_failure
 }
 
-fn timer_sequential(frame: *arch.interrupts.ReducedFrame) !void {
+fn timer_sequential(frame: *arch.interrupts.ReducedFrame, arg1: u64) !void {
     _ = frame;
+    _ = arg1;
 
     // doing nothing causes .internal_failure
 }
